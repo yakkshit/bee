@@ -9,7 +9,6 @@ plots/
 .DS_Store
 *.HEIC
 *.bin
-*.txt
 *.pdf
 *.png
 *.csv
