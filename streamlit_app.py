@@ -35,7 +35,25 @@ if input_method == "Upload CSV":
     if uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
 else:
-    csv_text = st.text_area("Paste your CSV data here:", height=200, placeholder="bee_id,d0,d1,d2,d3...\n1,A,A,A,A...\n2,D,D,D,D...")
+    DEFAULT_CSV = """bee_id,d0,d1,d2,d3,d4,d5,d6,d7,d8
+1,A,A,A,A,A,A,D,D,D
+2,D,D,D,D,D,D,D,D,D
+3,A,A,A,A,A,A,D,D,D
+4,A,A,A,A,A,A,A,B,B
+5,A,A,A,B,B,A,A,B,B
+6,A,A,A,A,A,A,A,A,A
+7,A,A,A,A,A,A,A,A,A
+8,A,A,A,A,A,A,A,A,A
+9,D,D,D,D,D,D,D,D,D
+10,A,A,A,A,A,A,A,A,A
+11,A,A,A,A,A,A,A,A,A
+12,A,A,A,A,A,D,D,D,D
+13,A,A,A,A,A,A,A,A,A
+14,D,D,D,D,D,D,D,D,D
+Temp,23.3,23.3,24.4,24.7,23.8,23.7,24.5,24.8,23.4
+Humidity,49,55,45,58,61,51,64,62,59"""
+    
+    csv_text = st.text_area("Paste your CSV data here (edit the example below):", value=DEFAULT_CSV, height=400)
     if csv_text:
         df = pd.read_csv(io.StringIO(csv_text))
 
