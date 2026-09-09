@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.matplotlib_cache/
+plots/
+*.png
+*.pdf
+*.csv
+.DS_Store
