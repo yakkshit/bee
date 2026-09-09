@@ -11,7 +11,8 @@ This is a Streamlit web application that visualizes bee observation data. It all
 1. Install dependencies: `pip install -r requirements.txt`
 2. Run Streamlit: `streamlit run streamlit_app.py`
 
-## How to run with Docker
+## How to run using the Setup Script (macOS/Linux)
+You can use the provided bash script to automatically verify Python, create a virtual environment, install dependencies, and run the app.
 1. Make the script executable: `chmod +x run.sh`
-2. Run the application: `./run.sh`
-3. Open `http://localhost:8501` in your browser.
+2. Run the script: `./run.sh`
+3. The script will automatically open `http://localhost:8501` in your browser.
