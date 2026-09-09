@@ -7,3 +7,9 @@ plots/
 *.pdf
 *.csv
 .DS_Store
+*.HEIC
+*.bin
+*.txt
+*.pdf
+*.png
+*.csv
