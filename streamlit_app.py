@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 from matplotlib.patches import Patch
 from scipy.optimize import curve_fit
+from scipy.stats import norm, linregress
 from lifelines import KaplanMeierFitter
 import io
 import base64
@@ -29,6 +30,10 @@ secondary_color = st.sidebar.color_picker("Secondary Color (Survival)", "#ff9900
 line_width = st.sidebar.slider("Line Width", min_value=1.0, max_value=5.0, value=2.4)
 marker_size = st.sidebar.slider("Marker Size", min_value=3.0, max_value=12.0, value=7.0)
 font_size = st.sidebar.slider("Font Size", min_value=8, max_value=18, value=11)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Statistical Analysis Settings")
+abbott_c = st.sidebar.number_input("Abbott Control Mortality (C) %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, help="Consider all as alive by default (C=0)")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Line Style")
@@ -94,6 +99,32 @@ if uploaded_file is not None:
     if 'last_uploaded' not in st.session_state or st.session_state.last_uploaded != uploaded_file.name:
         try:
             new_df = pd.read_csv(uploaded_file, sep=None, engine='python')
+            
+            # Check if it's the transposed format
+            if 'bee_id' in new_df.columns:
+                # Transpose the data
+                new_df = new_df.set_index('bee_id').T
+                new_df.reset_index(inplace=True)
+                new_df.rename(columns={'index': 'Day'}, inplace=True)
+                
+                # Rename bee columns
+                cols = list(new_df.columns)
+                for i in range(1, len(cols)):
+                    col_name = str(cols[i])
+                    if col_name.isdigit():
+                        cols[i] = f"Bee {col_name}"
+                    elif col_name == 'Temp':
+                        cols[i] = 'Temp (°C)'
+                new_df.columns = cols
+                
+                # Add default columns if missing
+                if 'Date/time' not in new_df.columns:
+                    new_df.insert(1, 'Date/time', '')
+                if 'Treatment' not in new_df.columns:
+                    new_df['Treatment'] = ''
+                if 'Observations/notes' not in new_df.columns:
+                    new_df['Observations/notes'] = ''
+
             new_df = new_df.astype(str)
             new_df.replace("nan", "", inplace=True)
             st.session_state.df = new_df
@@ -101,6 +132,7 @@ if uploaded_file is not None:
             st.rerun()
         except Exception as e:
             st.error(f"Error parsing CSV: {e}")
+
 
 col1, col2, col3 = st.columns([1.5, 1, 4])
 with col1:
@@ -267,6 +299,29 @@ dead_counts = np.array(dead_counts)
 survival_pct = alive_counts / num_bees * 100.0 if num_bees > 0 else np.zeros(num_days)
 mortality_pct = dead_counts / num_bees * 100.0 if num_bees > 0 else np.zeros(num_days)
 
+# Abbott Corrected Mortality
+abbott_corrected_pct = np.zeros_like(mortality_pct)
+if abbott_c < 100:
+    abbott_corrected_pct = (mortality_pct - abbott_c) / (100.0 - abbott_c) * 100.0
+    abbott_corrected_pct = np.clip(abbott_corrected_pct, 0, 100)
+
+# Probit Regression (Time-Mortality)
+clipped_mort = np.clip(abbott_corrected_pct, 0.01, 99.99)
+probit_vals = norm.ppf(clipped_mort / 100.0) + 5
+
+log_time = []
+probit_y = []
+for i, d in enumerate(day_indices):
+    if d > 0:
+        log_time.append(np.log10(d))
+        probit_y.append(probit_vals[i])
+
+if len(log_time) > 1:
+    res = linregress(log_time, probit_y)
+    probit_a, probit_b, probit_r = res.intercept, res.slope, res.rvalue
+else:
+    probit_a, probit_b, probit_r = 0, 0, 0
+
 # Binomial Standard Error for proportions
 mortality_se = np.sqrt((mortality_pct / 100.0) * (1.0 - mortality_pct / 100.0) / max(1, num_bees)) * 100.0
 survival_se = np.sqrt((survival_pct / 100.0) * (1.0 - survival_pct / 100.0) / max(1, num_bees)) * 100.0
@@ -329,7 +384,9 @@ plot_options = [
     "Interactive Cumulative Mortality (Line Chart)",
     "Interactive Status Breakdown (Area Chart)",
     "Interactive Temp vs Humidity (Scatter Plot)",
-    "Statistical Correlation Heatmap"
+    "Statistical Correlation Heatmap",
+    "Abbott Corrected Mortality Curve",
+    "Probit Regression (Time-Mortality)"
 ]
 selected_plots = st.multiselect("Choose which plots to view and download:", plot_options, default=plot_options)
 
@@ -351,14 +408,14 @@ if "Mortality Curve" in selected_plots and num_days > 0:
         ax.plot(t_dense, fit_mort_curve, color=primary_color, linewidth=line_width, linestyle=line_style, label='Logistic Model Fit')
         ax.errorbar(day_indices, mortality_pct, yerr=mortality_se, fmt='o', color=primary_color, ecolor=primary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=primary_color, markeredgecolor='black', label='Observed (Mean ± SE)')
         ax.axhline(50, color='#333333', linestyle=':', linewidth=1.2)
-        eq_text = f"$Y = \\frac{{{L_fit:.1f}}}{{1 + e^{{-{k_fit:.2f}(X - {t0_fit:.1f})}}}}$\n$R^2 = {r2_mort:.4f}$"
+        eq_text = f"Y = {L_fit:.1f} / (1 + exp(-{k_fit:.2f}(X - {t0_fit:.1f})))\nR² = {r2_mort:.4f}"
         ax.text(0.06, 0.90, eq_text, transform=ax.transAxes, fontsize=11, verticalalignment='top', bbox=dict(boxstyle='square,pad=0.3', facecolor='white', edgecolor='#e0e0e0', alpha=0.85))
         ax.set_xlabel('Observation Time / Days', fontsize=13, fontweight='bold', labelpad=7)
         ax.set_ylabel('Mortality / %', fontsize=13, fontweight='bold', labelpad=7)
         ax.set_xlim(-0.3, num_days-0.5)
         ax.set_ylim(-2, 102)
         ax.set_xticks(day_indices)
-        ax.set_xticklabels(day_labels)
+        ax.set_xticklabels(day_labels, rotation=45, ha="right")
         ax.yaxis.set_major_locator(MultipleLocator(25))
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -376,14 +433,14 @@ if "Survival Curve" in selected_plots and num_days > 0:
         ax.plot(t_dense, fit_surv_curve, color=secondary_color, linewidth=line_width, linestyle=line_style, label='Survival Model Fit')
         ax.errorbar(day_indices, survival_pct, yerr=survival_se, fmt='o', color=secondary_color, ecolor=secondary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=secondary_color, markeredgecolor='black', label='Observed (Mean ± SE)')
         ax.axhline(50, color='#333333', linestyle=':', linewidth=1.2)
-        eq_surv_text = f"$Y = {S0_surv:.1f} \\times e^{{-{a_surv:.4f} X^{{{b_surv:.2f}}}}}$\n$R^2 = {r2_surv:.4f}$"
+        eq_surv_text = f"Y = {S0_surv:.1f} * exp(-{a_surv:.4f} * X^{b_surv:.2f})\nR² = {r2_surv:.4f}"
         ax.text(0.06, 0.32, eq_surv_text, transform=ax.transAxes, fontsize=11, verticalalignment='top', bbox=dict(boxstyle='square,pad=0.3', facecolor='white', edgecolor='#e0e0e0', alpha=0.85))
         ax.set_xlabel('Observation Time / Days', fontsize=13, fontweight='bold', labelpad=7)
         ax.set_ylabel('Bee Survival / %', fontsize=13, fontweight='bold', labelpad=7)
         ax.set_xlim(-0.3, num_days-0.5)
         ax.set_ylim(-2, 105)
         ax.set_xticks(day_indices)
-        ax.set_xticklabels(day_labels)
+        ax.set_xticklabels(day_labels, rotation=45, ha="right")
         ax.yaxis.set_major_locator(MultipleLocator(25))
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -411,7 +468,7 @@ if "Kaplan-Meier Survival Analysis" in selected_plots and len(durations) > 0:
         ax.set_xlim(-0.2, num_days-0.5)
         ax.set_ylim(-0.02, 1.05)
         ax.set_xticks(day_indices)
-        ax.set_xticklabels(day_labels)
+        ax.set_xticklabels(day_labels, rotation=45, ha="right")
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.legend(loc='lower left', frameon=False, fontsize=10.5)
@@ -439,7 +496,7 @@ if "Individual Bee Status Heatmap" in selected_plots and num_days > 0 and num_be
         ax.set_xlim(-0.1, float(num_days))
         ax.set_ylim(-0.1, num_bees)
         ax.set_xticks(np.arange(num_days) + 0.45)
-        ax.set_xticklabels(day_labels, fontsize=11.5, fontweight='bold')
+        ax.set_xticklabels(day_labels, fontsize=11.5, fontweight='bold', rotation=45, ha='right')
         ax.set_yticks(np.arange(num_bees) + 0.425)
         ax.set_yticklabels([f'Bee {num_bees - i}' for i in range(num_bees)], fontsize=10.5, fontweight='bold')
         ax.set_xlabel('Observation Day', fontsize=12.5, fontweight='bold', labelpad=7)
@@ -481,7 +538,7 @@ if "Environmental Conditions" in selected_plots and any(temps):
             ax2.set_ylim(min(humidities)-5, max(humidities)+5)
         ax1.set_xlim(-0.3, num_days-0.7)
         ax1.set_xticks(day_indices)
-        ax1.set_xticklabels(day_labels)
+        ax1.set_xticklabels(day_labels, rotation=45, ha="right")
         ax1.spines['top'].set_visible(False)
         ax2.spines['top'].set_visible(False)
         lines = l1 + l2
@@ -502,13 +559,13 @@ if "Combined Multi-Panel Figure" in selected_plots and num_days > 0:
     ax_a.plot(t_dense, fit_mort_curve, color=primary_color, linewidth=line_width, linestyle=line_style)
     ax_a.errorbar(day_indices, mortality_pct, yerr=mortality_se, fmt='o', color=primary_color, ecolor=primary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=primary_color, markeredgecolor='black')
     ax_a.axhline(50, color='#333333', linestyle=':', linewidth=1.2)
-    ax_a.text(0.06, 0.90, f"$Y = \\frac{{{L_fit:.1f}}}{{1 + e^{{-{k_fit:.2f}(X - {t0_fit:.1f})}}}}$\n$R^2 = {r2_mort:.4f}$", transform=ax_a.transAxes, fontsize=10.5, verticalalignment='top')
+    ax_a.text(0.06, 0.90, f"Y = {L_fit:.1f} / (1 + exp(-{k_fit:.2f}(X - {t0_fit:.1f})))\nR² = {r2_mort:.4f}", transform=ax_a.transAxes, fontsize=10.5, verticalalignment='top')
     ax_a.set_xlabel('Observation Time / Days', fontsize=11.5, fontweight='bold')
     ax_a.set_ylabel('Mortality / %', fontsize=11.5, fontweight='bold')
     ax_a.set_xlim(-0.3, num_days-0.5)
     ax_a.set_ylim(-2, 102)
     ax_a.set_xticks(day_indices)
-    ax_a.set_xticklabels(day_labels)
+    ax_a.set_xticklabels(day_labels, rotation=45, ha="right")
     ax_a.yaxis.set_major_locator(MultipleLocator(25))
     ax_a.spines['top'].set_visible(False)
     ax_a.spines['right'].set_visible(False)
@@ -519,13 +576,13 @@ if "Combined Multi-Panel Figure" in selected_plots and num_days > 0:
     ax_b.plot(t_dense, fit_surv_curve, color=secondary_color, linewidth=line_width, linestyle=line_style)
     ax_b.errorbar(day_indices, survival_pct, yerr=survival_se, fmt='o', color=secondary_color, ecolor=secondary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=secondary_color, markeredgecolor='black')
     ax_b.axhline(50, color='#333333', linestyle=':', linewidth=1.2)
-    ax_b.text(0.06, 0.32, f"$Y = {S0_surv:.1f} \\times e^{{-{a_surv:.4f} X^{{{b_surv:.2f}}}}}$\n$R^2 = {r2_surv:.4f}$", transform=ax_b.transAxes, fontsize=10.5, verticalalignment='top')
+    ax_b.text(0.06, 0.32, f"Y = {S0_surv:.1f} * exp(-{a_surv:.4f} * X^{b_surv:.2f})\nR² = {r2_surv:.4f}", transform=ax_b.transAxes, fontsize=10.5, verticalalignment='top')
     ax_b.set_xlabel('Observation Time / Days', fontsize=11.5, fontweight='bold')
     ax_b.set_ylabel('Bee Survival / %', fontsize=11.5, fontweight='bold')
     ax_b.set_xlim(-0.3, num_days-0.5)
     ax_b.set_ylim(-2, 105)
     ax_b.set_xticks(day_indices)
-    ax_b.set_xticklabels(day_labels)
+    ax_b.set_xticklabels(day_labels, rotation=45, ha="right")
     ax_b.yaxis.set_major_locator(MultipleLocator(25))
     ax_b.spines['top'].set_visible(False)
     ax_b.spines['right'].set_visible(False)
@@ -543,7 +600,7 @@ if "Combined Multi-Panel Figure" in selected_plots and num_days > 0:
     ax_c.set_xlim(-0.2, num_days-0.5)
     ax_c.set_ylim(-0.02, 1.05)
     ax_c.set_xticks(day_indices)
-    ax_c.set_xticklabels(day_labels)
+    ax_c.set_xticklabels(day_labels, rotation=45, ha="right")
     ax_c.spines['top'].set_visible(False)
     ax_c.spines['right'].set_visible(False)
     ax_c.legend(loc='lower left', frameon=False, fontsize=9.5)
@@ -567,7 +624,7 @@ if "Combined Multi-Panel Figure" in selected_plots and num_days > 0:
         
         ax_d1.set_xlim(-0.3, num_days-0.7)
         ax_d1.set_xticks(day_indices)
-        ax_d1.set_xticklabels(day_labels)
+        ax_d1.set_xticklabels(day_labels, rotation=45, ha="right")
         ax_d1.spines['top'].set_visible(False)
         ax_d2.spines['top'].set_visible(False)
         lines_comb = l1 + l2
@@ -654,3 +711,42 @@ if "Statistical Correlation Heatmap" in selected_plots and num_days > 0:
             
     st.pyplot(fig_corr)
     get_image_download_link(fig_corr, 'fig_correlation_heatmap.png', 'Download Correlation Heatmap')
+
+if "Abbott Corrected Mortality Curve" in selected_plots and num_days > 0:
+    st.markdown("---")
+    st.subheader("Abbott Corrected Mortality")
+    fig_abbott, ax_abbott = plt.subplots(figsize=(6.8, 5.4), dpi=300)
+    ax_abbott.plot(day_indices, abbott_corrected_pct, color=primary_color, marker='o', linewidth=line_width, linestyle=line_style, markersize=marker_size)
+    ax_abbott.set_xlabel('Observation Time / Days', fontsize=13, fontweight='bold', labelpad=7)
+    ax_abbott.set_ylabel('Corrected Mortality / %', fontsize=13, fontweight='bold', labelpad=7)
+    ax_abbott.set_xlim(-0.3, num_days-0.5)
+    ax_abbott.set_ylim(-2, 102)
+    ax_abbott.set_xticks(day_indices)
+    ax_abbott.set_xticklabels(day_labels, rotation=45, ha="right")
+    ax_abbott.spines['top'].set_visible(False)
+    ax_abbott.spines['right'].set_visible(False)
+    fig_abbott.tight_layout()
+    st.pyplot(fig_abbott)
+    get_image_download_link(fig_abbott, 'fig_abbott_corrected.png', 'Download Abbott Corrected Curve')
+
+if "Probit Regression (Time-Mortality)" in selected_plots and len(log_time) > 1:
+    st.markdown("---")
+    st.subheader("Probit Regression (Time-Mortality)")
+    fig_probit, ax_probit = plt.subplots(figsize=(6.8, 5.4), dpi=300)
+    ax_probit.scatter(log_time, probit_y, color=primary_color, s=marker_size**2)
+    
+    # Regression line
+    x_line = np.linspace(min(log_time), max(log_time), 100)
+    y_line = probit_a + probit_b * x_line
+    ax_probit.plot(x_line, y_line, color='#333333', linewidth=line_width, linestyle=line_style)
+    
+    eq_text = f"PROBIT(P) = {probit_a:.2f} + {probit_b:.2f}x\nR² = {probit_r**2:.4f}"
+    ax_probit.text(0.05, 0.95, eq_text, transform=ax_probit.transAxes, fontsize=11, verticalalignment='top', bbox=dict(boxstyle='square,pad=0.3', facecolor='white', edgecolor='#e0e0e0', alpha=0.85))
+    
+    ax_probit.set_xlabel('Log10(Observation Time / Days)', fontsize=13, fontweight='bold', labelpad=7)
+    ax_probit.set_ylabel('Probit(P)', fontsize=13, fontweight='bold', labelpad=7)
+    ax_probit.spines['top'].set_visible(False)
+    ax_probit.spines['right'].set_visible(False)
+    fig_probit.tight_layout()
+    st.pyplot(fig_probit)
+    get_image_download_link(fig_probit, 'fig_probit_regression.png', 'Download Probit Regression Curve')
