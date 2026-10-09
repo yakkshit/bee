@@ -2,7 +2,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator
+from matplotlib.ticker import MultipleLocator, MaxNLocator
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 from scipy.optimize import curve_fit
@@ -1467,24 +1467,29 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
 
         ax_p.set_xlabel('Log10(Observation Time / Days)', fontsize=12.5, fontweight='bold', labelpad=8)
         ax_p.set_ylabel('Probit Value (P)', fontsize=12.5, fontweight='bold', labelpad=8)
-        ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=14)
         ax_p.spines['top'].set_visible(False)
         ax_p.spines['right'].set_visible(False)
 
-        # Place Legend based on user option
+        # Place Legend based on user option with dynamic title padding to eliminate title-legend overlap
         if legend_loc_opt == "Top (Horizontal)":
+            num_cols = min(3, max(1, num_files + 1))
+            num_rows = (len(legend_handles_probit) + num_cols - 1) // num_cols
+            dynamic_title_pad = 22 + (num_rows * 26)
+            ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=dynamic_title_pad)
             ax_p.legend(
                 handles=legend_handles_probit, loc='lower center', bbox_to_anchor=(0.5, 1.02),
-                ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.0
+                ncol=num_cols, frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.0
             )
             fig_p_multi.tight_layout()
         elif legend_loc_opt == "Bottom (Horizontal)":
+            ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=14)
             ax_p.legend(
-                handles=legend_handles_probit, loc='upper center', bbox_to_anchor=(0.5, -0.16),
+                handles=legend_handles_probit, loc='upper center', bbox_to_anchor=(0.5, -0.18),
                 ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.0
             )
             fig_p_multi.tight_layout()
         else: # Right (Outside)
+            ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=14)
             ax_p.legend(
                 handles=legend_handles_probit, loc='upper left', bbox_to_anchor=(1.02, 1.0),
                 frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.0
@@ -1617,8 +1622,9 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         for bar in bars:
             h = bar.get_height()
             if not np.isnan(h) and h > 0:
-                ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + 0.1, f"{h:.2f} Days", ha='center', va='bottom', fontweight='bold', fontsize=10)
+                ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + 0.15, f"{int(h)} Days", ha='center', va='bottom', fontweight='bold', fontsize=10.5)
 
+        ax_lt.yaxis.set_major_locator(MaxNLocator(integer=True))
         ax_lt.set_ylabel('LT50 (Days)', fontsize=12, fontweight='bold')
         ax_lt.set_title('Calculated LT50 across CSV Files', fontsize=14, fontweight='bold', pad=12)
         ax_lt.spines['top'].set_visible(False)
