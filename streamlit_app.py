@@ -12,6 +12,7 @@ from lifelines import KaplanMeierFitter
 import io
 import base64
 import zipfile
+import re
 
 # Publication-grade typography and aesthetic parameters matching the paper
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
@@ -227,6 +228,39 @@ with st.expander("📝 Edit Observation Sheet Metadata", expanded=False):
     st.session_state['meta_Other conditions'] = cols3[3].text_input("Other conditions", value=st.session_state['meta_Other conditions'] or "")
 
 
+def parse_time_data(df):
+    """Parses the 'Day' column into continuous elapsed days starting at Day 1 = 1.0."""
+    time_col_name = 'Day' if 'Day' in df.columns else ('Date/time' if 'Date/time' in df.columns else None)
+    
+    if time_col_name:
+        raw_times = df[time_col_name].astype(str).tolist()
+    else:
+        raw_times = [f"Day {i+1}" for i in range(len(df))]
+        
+    def parse_to_days(t_str):
+        t_str = str(t_str).strip()
+        # Match patterns like Day1, Day 1, Day1_2, Day1_2:10
+        match = re.match(r"Day\s*(\d+)(?:_(\d+)(?::(\d+))?)?", t_str, re.IGNORECASE)
+        if match:
+            d = int(match.group(1))
+            h = int(match.group(2)) if match.group(2) else 0
+            m = int(match.group(3)) if match.group(3) else 0
+            # Day 1 = 1.0 day, Day 1_2 = 1 + 2/24 = 1.0833 days, Day 2 = 2.0 days
+            return d * 1.0 + (h / 24.0) + (m / 1440.0)
+        try:
+            val = float(t_str)
+            return val if val >= 1.0 else val + 1.0
+        except:
+            return np.nan
+
+    elapsed_days = np.array([parse_to_days(t) for t in raw_times])
+    # Fallback for any missing values
+    for i in range(len(elapsed_days)):
+        if np.isnan(elapsed_days[i]):
+            elapsed_days[i] = elapsed_days[i-1] + 1.0 if i > 0 else 1.0
+            
+    return raw_times, elapsed_days
+
 def parse_batch_df(raw_df, abbott_c=0.0):
     df_copy = raw_df.copy()
     if 'bee_id' in df_copy.columns:
@@ -246,8 +280,8 @@ def parse_batch_df(raw_df, abbott_c=0.0):
     df_copy.replace("nan", "", inplace=True)
 
     num_days = len(df_copy)
-    day_indices = np.arange(1, num_days + 1, dtype=float)
-    day_labels = df_copy['Day'].tolist() if 'Day' in df_copy.columns else [f"Day {i+1}" for i in range(num_days)]
+    raw_times, batch_elapsed_days = parse_time_data(df_copy)
+    day_labels = raw_times
 
     cols_lower = [str(c).lower().strip() for c in df_copy.columns]
     has_bee_cols = any(str(c).lower().startswith('bee') for c in df_copy.columns)
@@ -255,18 +289,8 @@ def parse_batch_df(raw_df, abbott_c=0.0):
     if not has_bee_cols and any(k in cols_lower for k in ['total', 'dead', 'mortality', '% mortality']):
         dead_col = next((c for c in df_copy.columns if 'dead' in str(c).lower() or 'mortality' in str(c).lower()), None)
         total_col = next((c for c in df_copy.columns if 'total' in str(c).lower() or 'n' in str(c).lower()), None)
-        time_col = next((c for c in df_copy.columns if str(c).lower() in ['day', 'time', 'dose', 'hours', 'days']), df_copy.columns[0])
 
-        times_numeric = []
-        for val in df_copy[time_col]:
-            v_str = str(val).replace('Day', '').replace('day', '').replace('d', '').strip()
-            try:
-                times_numeric.append(float(v_str))
-            except:
-                times_numeric.append(0.0)
-        times_numeric = np.array(times_numeric)
-        if all(t == 0 for t in times_numeric):
-            times_numeric = day_indices
+        times_numeric = batch_elapsed_days
 
         if total_col and dead_col:
             totals = pd.to_numeric(df_copy[total_col], errors='coerce').fillna(10).values
@@ -283,7 +307,7 @@ def parse_batch_df(raw_df, abbott_c=0.0):
     else:
         bee_cols = [c for c in df_copy.columns if str(c).lower().startswith('bee')]
         num_bees = len(bee_cols) if len(bee_cols) > 0 else 10
-        times_numeric = day_indices
+        times_numeric = batch_elapsed_days
 
         if len(bee_cols) > 0:
             states_matrix = []
@@ -310,13 +334,14 @@ def parse_batch_df(raw_df, abbott_c=0.0):
 
     log_time = []
     probit_y = []
-    for i, t in enumerate(times_numeric):
+    for i, t in enumerate(batch_elapsed_days):
         if t > 0:
             log_time.append(np.log10(t))
             probit_y.append(probit_vals[i])
 
     log_time = np.array(log_time)
     probit_y = np.array(probit_y)
+
 
     if len(log_time) > 1:
         res = linregress(log_time, probit_y)
@@ -573,9 +598,9 @@ def render_single_batch_tab():
     st.markdown("---")
     st.header("📊 Plot Generation")
 
-    day_labels = df['Day'].tolist() if 'Day' in df.columns else [f"Day {i+1}" for i in range(len(df))]
+    day_labels, elapsed_days = parse_time_data(df)
     num_days = len(df)
-    day_indices = np.arange(num_days)
+    max_time = elapsed_days[-1] if len(elapsed_days) > 0 else 1.0
 
     bee_cols = [c for c in df.columns if str(c).lower().startswith('bee')]
     num_bees = len(bee_cols)
@@ -601,10 +626,11 @@ def render_single_batch_tab():
 
     for b_states in states_matrix:
         if 'D' in b_states:
-            durations.append(b_states.index('D'))
+            death_row_idx = b_states.index('D')
+            durations.append(elapsed_days[death_row_idx])
             events.append(1)
         else:
-            durations.append(num_days - 1 if num_days > 0 else 0)
+            durations.append(elapsed_days[-1] if num_days > 0 else 0)
             events.append(0)
 
     durations = np.array(durations)
@@ -635,7 +661,7 @@ def render_single_batch_tab():
 
     log_time = []
     probit_y = []
-    for i, d in enumerate(day_indices):
+    for i, d in enumerate(elapsed_days):
         if d > 0:
             log_time.append(np.log10(d))
             probit_y.append(probit_vals[i])
@@ -656,7 +682,7 @@ def render_single_batch_tab():
 
     try:
         popt_mort, _ = curve_fit(
-            logistic_mort, day_indices, mortality_pct,
+            logistic_mort, elapsed_days, mortality_pct,
             p0=[60.0, 0.5, 5.5],
             bounds=([20.0, 0.01, 0.0], [100.0, 5.0, 15.0]),
             maxfev=10000
@@ -665,7 +691,7 @@ def render_single_batch_tab():
         popt_mort = [60.0, 0.5, 5.5]
 
     L_fit, k_fit, t0_fit = popt_mort
-    residuals_mort = mortality_pct - logistic_mort(day_indices, *popt_mort)
+    residuals_mort = mortality_pct - logistic_mort(elapsed_days, *popt_mort)
     ss_res_mort = np.sum(residuals_mort**2)
     ss_tot_mort = np.sum((mortality_pct - np.mean(mortality_pct))**2)
     r2_mort = 1.0 - (ss_res_mort / ss_tot_mort) if ss_tot_mort != 0 else 1.0
@@ -675,7 +701,7 @@ def render_single_batch_tab():
 
     try:
         popt_surv, _ = curve_fit(
-            survival_decay, day_indices, survival_pct,
+            survival_decay, elapsed_days, survival_pct,
             p0=[78.57, 0.001, 3.0],
             bounds=([50.0, 1e-6, 0.1], [100.0, 2.0, 10.0]),
             maxfev=10000
@@ -684,16 +710,16 @@ def render_single_batch_tab():
         popt_surv = [78.57, 0.001, 3.0]
 
     S0_surv, a_surv, b_surv = popt_surv
-    residuals_surv = survival_pct - survival_decay(day_indices, *popt_surv)
+    residuals_surv = survival_pct - survival_decay(elapsed_days, *popt_surv)
     ss_res_surv = np.sum(residuals_surv**2)
     ss_tot_surv = np.sum((survival_pct - np.mean(survival_pct))**2)
     r2_surv = 1.0 - (ss_res_surv / ss_tot_surv) if ss_tot_surv != 0 else 1.0
 
     kmf = KaplanMeierFitter()
     if len(durations) > 0:
-        kmf.fit(durations, event_observed=events, timeline=np.linspace(0, max(durations)+1, max(durations)*20 if max(durations)>0 else 140))
+        kmf.fit(durations, event_observed=events, timeline=np.linspace(0, max(elapsed_days)+1, max(int(max(elapsed_days)*20), 140)))
 
-    t_dense = np.linspace(0, num_days-0.5, 250) if num_days > 0 else np.array([])
+    t_dense = np.linspace(0, max_time * 1.05, 250) if num_days > 0 else np.array([])
     fit_mort_curve = logistic_mort(t_dense, *popt_mort) if num_days > 0 else np.array([])
     fit_surv_curve = survival_decay(t_dense, *popt_surv) if num_days > 0 else np.array([])
 
@@ -758,15 +784,15 @@ def render_single_batch_tab():
             fit_se = np.std(residuals_mort)
             ax.fill_between(t_dense, np.clip(fit_mort_curve - 1.96*fit_se, 0, 100), np.clip(fit_mort_curve + 1.96*fit_se, 0, 100), color=primary_color, alpha=0.12, label='95% Confidence Band')
             ax.plot(t_dense, fit_mort_curve, color=primary_color, linewidth=line_width, linestyle=line_style, label='Logistic Model Fit')
-            ax.errorbar(day_indices, mortality_pct, yerr=mortality_se, fmt='o', color=primary_color, ecolor=primary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=primary_color, markeredgecolor='black', label='Observed (Mean ± SE)')
+            ax.errorbar(elapsed_days, mortality_pct, yerr=mortality_se, fmt='o', color=primary_color, ecolor=primary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=primary_color, markeredgecolor='black', label='Observed (Mean ± SE)')
             ax.axhline(50, color='#333333', linestyle=':', linewidth=1.2)
             eq_text = f"Y = {L_fit:.1f} / (1 + exp(-{k_fit:.2f}(X - {t0_fit:.1f})))\nR² = {r2_mort:.4f}"
             ax.text(0.06, 0.90, eq_text, transform=ax.transAxes, fontsize=11, verticalalignment='top', bbox=dict(boxstyle='square,pad=0.3', facecolor='white', edgecolor='#e0e0e0', alpha=0.85))
             ax.set_xlabel('Observation Time / Days', fontsize=13, fontweight='bold', labelpad=7)
             ax.set_ylabel('Mortality / %', fontsize=13, fontweight='bold', labelpad=7)
-            ax.set_xlim(-0.3, num_days-0.5)
+            ax.set_xlim(-0.1, max_time * 1.05)
             ax.set_ylim(-2, 102)
-            ax.set_xticks(day_indices)
+            ax.set_xticks(elapsed_days)
             ax.set_xticklabels(day_labels, rotation=45, ha="right")
             ax.yaxis.set_major_locator(MultipleLocator(25))
             ax.spines['top'].set_visible(False)
@@ -783,15 +809,15 @@ def render_single_batch_tab():
             surv_se_fit = np.std(residuals_surv)
             ax.fill_between(t_dense, np.clip(fit_surv_curve - 1.96*surv_se_fit, 0, 100), np.clip(fit_surv_curve + 1.96*surv_se_fit, 0, 100), color=secondary_color, alpha=0.15, label='95% Confidence Band')
             ax.plot(t_dense, fit_surv_curve, color=secondary_color, linewidth=line_width, linestyle=line_style, label='Survival Model Fit')
-            ax.errorbar(day_indices, survival_pct, yerr=survival_se, fmt='o', color=secondary_color, ecolor=secondary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=secondary_color, markeredgecolor='black', label='Observed (Mean ± SE)')
+            ax.errorbar(elapsed_days, survival_pct, yerr=survival_se, fmt='o', color=secondary_color, ecolor=secondary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=secondary_color, markeredgecolor='black', label='Observed (Mean ± SE)')
             ax.axhline(50, color='#333333', linestyle=':', linewidth=1.2)
             eq_surv_text = f"Y = {S0_surv:.1f} * exp(-{a_surv:.4f} * X^{b_surv:.2f})\nR² = {r2_surv:.4f}"
             ax.text(0.06, 0.32, eq_surv_text, transform=ax.transAxes, fontsize=11, verticalalignment='top', bbox=dict(boxstyle='square,pad=0.3', facecolor='white', edgecolor='#e0e0e0', alpha=0.85))
             ax.set_xlabel('Observation Time / Days', fontsize=13, fontweight='bold', labelpad=7)
             ax.set_ylabel('Bee Survival / %', fontsize=13, fontweight='bold', labelpad=7)
-            ax.set_xlim(-0.3, num_days-0.5)
+            ax.set_xlim(-0.1, max_time * 1.05)
             ax.set_ylim(-2, 105)
-            ax.set_xticks(day_indices)
+            ax.set_xticks(elapsed_days)
             ax.set_xticklabels(day_labels, rotation=45, ha="right")
             ax.yaxis.set_major_locator(MultipleLocator(25))
             ax.spines['top'].set_visible(False)
@@ -817,9 +843,9 @@ def render_single_batch_tab():
             ax.axhline(0.5, color='#333333', linestyle=':', linewidth=1.2)
             ax.set_xlabel('Observation Time / Days', fontsize=13, fontweight='bold', labelpad=7)
             ax.set_ylabel('Survival Probability', fontsize=13, fontweight='bold', labelpad=7)
-            ax.set_xlim(-0.2, num_days-0.5)
+            ax.set_xlim(-0.1, max_time * 1.05)
             ax.set_ylim(-0.02, 1.05)
-            ax.set_xticks(day_indices)
+            ax.set_xticks(elapsed_days)
             ax.set_xticklabels(day_labels, rotation=45, ha="right")
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
@@ -873,7 +899,7 @@ def render_single_batch_tab():
         with cols[col_idx % 2]:
             st.subheader("Environmental Conditions")
             fig5, ax1 = plt.subplots(figsize=(7.0, 5.2), dpi=300)
-            x_days = np.arange(num_days)
+            x_days = elapsed_days
             color_temp = '#d95f02'
             ax1.set_xlabel('Observation Time / Days', fontsize=12.5, fontweight='bold', labelpad=7)
             ax1.set_ylabel('Temperature / °C', color=color_temp, fontsize=12.5, fontweight='bold', labelpad=7)
@@ -888,8 +914,8 @@ def render_single_batch_tab():
             ax2.tick_params(axis='y', labelcolor=color_hum)
             if any(humidities):
                 ax2.set_ylim(min(humidities)-5, max(humidities)+5)
-            ax1.set_xlim(-0.3, num_days-0.7)
-            ax1.set_xticks(day_indices)
+            ax1.set_xlim(-0.1, max_time * 1.05)
+            ax1.set_xticks(elapsed_days)
             ax1.set_xticklabels(day_labels, rotation=45, ha="right")
             ax1.spines['top'].set_visible(False)
             ax2.spines['top'].set_visible(False)
@@ -909,14 +935,14 @@ def render_single_batch_tab():
         ax_a = fig6.add_subplot(gs[0, 0])
         ax_a.fill_between(t_dense, np.clip(fit_mort_curve - 1.96*fit_se, 0, 100), np.clip(fit_mort_curve + 1.96*fit_se, 0, 100), color=primary_color, alpha=0.12)
         ax_a.plot(t_dense, fit_mort_curve, color=primary_color, linewidth=line_width, linestyle=line_style)
-        ax_a.errorbar(day_indices, mortality_pct, yerr=mortality_se, fmt='o', color=primary_color, ecolor=primary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=primary_color, markeredgecolor='black')
+        ax_a.errorbar(elapsed_days, mortality_pct, yerr=mortality_se, fmt='o', color=primary_color, ecolor=primary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=primary_color, markeredgecolor='black')
         ax_a.axhline(50, color='#333333', linestyle=':', linewidth=1.2)
         ax_a.text(0.06, 0.90, f"Y = {L_fit:.1f} / (1 + exp(-{k_fit:.2f}(X - {t0_fit:.1f})))\nR² = {r2_mort:.4f}", transform=ax_a.transAxes, fontsize=10.5, verticalalignment='top')
         ax_a.set_xlabel('Observation Time / Days', fontsize=11.5, fontweight='bold')
         ax_a.set_ylabel('Mortality / %', fontsize=11.5, fontweight='bold')
-        ax_a.set_xlim(-0.3, num_days-0.5)
+        ax_a.set_xlim(-0.1, max_time * 1.05)
         ax_a.set_ylim(-2, 102)
-        ax_a.set_xticks(day_indices)
+        ax_a.set_xticks(elapsed_days)
         ax_a.set_xticklabels(day_labels, rotation=45, ha="right")
         ax_a.yaxis.set_major_locator(MultipleLocator(25))
         ax_a.spines['top'].set_visible(False)
@@ -926,14 +952,14 @@ def render_single_batch_tab():
         ax_b = fig6.add_subplot(gs[0, 1])
         ax_b.fill_between(t_dense, np.clip(fit_surv_curve - 1.96*surv_se_fit, 0, 100), np.clip(fit_surv_curve + 1.96*surv_se_fit, 0, 100), color=secondary_color, alpha=0.15)
         ax_b.plot(t_dense, fit_surv_curve, color=secondary_color, linewidth=line_width, linestyle=line_style)
-        ax_b.errorbar(day_indices, survival_pct, yerr=survival_se, fmt='o', color=secondary_color, ecolor=secondary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=secondary_color, markeredgecolor='black')
+        ax_b.errorbar(elapsed_days, survival_pct, yerr=survival_se, fmt='o', color=secondary_color, ecolor=secondary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=secondary_color, markeredgecolor='black')
         ax_b.axhline(50, color='#333333', linestyle=':', linewidth=1.2)
         ax_b.text(0.06, 0.32, f"Y = {S0_surv:.1f} * exp(-{a_surv:.4f} * X^{b_surv:.2f})\nR² = {r2_surv:.4f}", transform=ax_b.transAxes, fontsize=10.5, verticalalignment='top')
         ax_b.set_xlabel('Observation Time / Days', fontsize=11.5, fontweight='bold')
         ax_b.set_ylabel('Bee Survival / %', fontsize=11.5, fontweight='bold')
-        ax_b.set_xlim(-0.3, num_days-0.5)
+        ax_b.set_xlim(-0.1, max_time * 1.05)
         ax_b.set_ylim(-2, 105)
-        ax_b.set_xticks(day_indices)
+        ax_b.set_xticks(elapsed_days)
         ax_b.set_xticklabels(day_labels, rotation=45, ha="right")
         ax_b.yaxis.set_major_locator(MultipleLocator(25))
         ax_b.spines['top'].set_visible(False)
@@ -949,9 +975,9 @@ def render_single_batch_tab():
         ax_c.axhline(0.5, color='#333333', linestyle=':', linewidth=1.2)
         ax_c.set_xlabel('Observation Time / Days', fontsize=11.5, fontweight='bold')
         ax_c.set_ylabel('Survival Probability', fontsize=11.5, fontweight='bold')
-        ax_c.set_xlim(-0.2, num_days-0.5)
+        ax_c.set_xlim(-0.1, max_time * 1.05)
         ax_c.set_ylim(-0.02, 1.05)
-        ax_c.set_xticks(day_indices)
+        ax_c.set_xticks(elapsed_days)
         ax_c.set_xticklabels(day_labels, rotation=45, ha="right")
         ax_c.spines['top'].set_visible(False)
         ax_c.spines['right'].set_visible(False)
@@ -962,20 +988,20 @@ def render_single_batch_tab():
             ax_d1 = fig6.add_subplot(gs[1, 1])
             ax_d1.set_xlabel('Observation Time / Days', fontsize=11.5, fontweight='bold')
             ax_d1.set_ylabel('Temperature / °C', color=color_temp, fontsize=11.5, fontweight='bold')
-            l1 = ax_d1.plot(x_days, temps, color=color_temp, marker='o', linewidth=2.2, markersize=6.5, label='Temperature (°C)')
+            l1 = ax_d1.plot(elapsed_days, temps, color=color_temp, marker='o', linewidth=2.2, markersize=6.5, label='Temperature (°C)')
             ax_d1.tick_params(axis='y', labelcolor=color_temp)
             if any(temps):
                 ax_d1.set_ylim(min(temps)-1, max(temps)+1)
 
             ax_d2 = ax_d1.twinx()
             ax_d2.set_ylabel('Relative Humidity / %', color=color_hum, fontsize=11.5, fontweight='bold')
-            l2 = ax_d2.plot(x_days, humidities, color=color_hum, marker='s', linewidth=2.2, markersize=6.5, linestyle='--', label='Humidity (%)')
+            l2 = ax_d2.plot(elapsed_days, humidities, color=color_hum, marker='s', linewidth=2.2, markersize=6.5, linestyle='--', label='Humidity (%)')
             ax_d2.tick_params(axis='y', labelcolor=color_hum)
             if any(humidities):
                 ax_d2.set_ylim(min(humidities)-5, max(humidities)+5)
 
-            ax_d1.set_xlim(-0.3, num_days-0.7)
-            ax_d1.set_xticks(day_indices)
+            ax_d1.set_xlim(-0.1, max_time * 1.05)
+            ax_d1.set_xticks(elapsed_days)
             ax_d1.set_xticklabels(day_labels, rotation=45, ha="right")
             ax_d1.spines['top'].set_visible(False)
             ax_d2.spines['top'].set_visible(False)
@@ -1023,10 +1049,11 @@ def render_single_batch_tab():
         st.line_chart(mortality_df, color=[primary_color])
 
         fig_cum, ax_cum = plt.subplots(figsize=(6.8, 5.2), dpi=300)
-        ax_cum.plot(day_indices, dead_counts, marker='o', color=primary_color, linewidth=line_width, markersize=marker_size, label='Cumulative Mortality')
+        ax_cum.plot(elapsed_days, dead_counts, marker='o', color=primary_color, linewidth=line_width, markersize=marker_size, label='Cumulative Mortality')
         ax_cum.set_xlabel('Observation Time / Days', fontsize=12, fontweight='bold', labelpad=7)
         ax_cum.set_ylabel('Cumulative Dead Bees', fontsize=12, fontweight='bold', labelpad=7)
-        ax_cum.set_xticks(day_indices)
+        ax_cum.set_xlim(-0.1, max_time * 1.05)
+        ax_cum.set_xticks(elapsed_days)
         ax_cum.set_xticklabels(day_labels, rotation=45, ha='right')
         ax_cum.spines['top'].set_visible(False)
         ax_cum.spines['right'].set_visible(False)
@@ -1048,12 +1075,13 @@ def render_single_batch_tab():
         st.area_chart(area_df, color=[hm_dead_color, hm_behavior_color, hm_alive_color])
 
         fig_area, ax_area = plt.subplots(figsize=(6.8, 5.2), dpi=300)
-        ax_area.stackplot(day_indices, dead_counts, behavior_counts, alive_counts,
+        ax_area.stackplot(elapsed_days, dead_counts, behavior_counts, alive_counts,
                           labels=['Dead', 'Behavior Change', 'Healthy / Alive'],
                           colors=[hm_dead_color, hm_behavior_color, hm_alive_color], alpha=0.85)
-        ax_area.set_xlabel('Observation Day', fontsize=12, fontweight='bold', labelpad=7)
+        ax_area.set_xlabel('Observation Time / Days', fontsize=12, fontweight='bold', labelpad=7)
         ax_area.set_ylabel('Number of Bees', fontsize=12, fontweight='bold', labelpad=7)
-        ax_area.set_xticks(day_indices)
+        ax_area.set_xlim(-0.1, max_time * 1.05)
+        ax_area.set_xticks(elapsed_days)
         ax_area.set_xticklabels(day_labels, rotation=45, ha='right')
         ax_area.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='none')
         ax_area.spines['top'].set_visible(False)
@@ -1096,16 +1124,18 @@ def render_single_batch_tab():
             st.line_chart(cons_df)
 
             fig_cons, ax_cons = plt.subplots(figsize=(8.0, 5.0), dpi=300)
-            x_days = np.arange(1, num_days + 1)
+            x_days = elapsed_days
             colors = plt.cm.tab20(np.linspace(0, 1, max(1, len(cons_cols))))
             for i, c in enumerate(cons_cols):
                 bee_label = c.replace("Cons", "Bee").replace(" (µL)", "").strip()
                 ax_cons.plot(x_days, cons_matrix[i], marker='o', linewidth=1.5, markersize=5, label=bee_label, color=colors[i])
 
-            ax_cons.set_xlabel('Day', fontsize=12, fontweight='bold')
+            ax_cons.set_xlabel('Observation Time / Days', fontsize=12, fontweight='bold')
             ax_cons.set_ylabel('Consumption (µL)', fontsize=12, fontweight='bold')
             ax_cons.set_title('Daily Resource Consumption per Bee', fontsize=14, fontweight='bold', pad=15)
-            ax_cons.set_xticks(x_days)
+            ax_cons.set_xlim(-0.1, max_time * 1.05)
+            ax_cons.set_xticks(elapsed_days)
+            ax_cons.set_xticklabels(day_labels, rotation=45, ha='right')
             ax_cons.grid(True, linestyle='--', alpha=0.6)
 
             ax_cons.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
@@ -1150,12 +1180,12 @@ def render_single_batch_tab():
         st.markdown("---")
         st.subheader("Abbott Corrected Mortality")
         fig_abbott, ax_abbott = plt.subplots(figsize=(6.8, 5.4), dpi=300)
-        ax_abbott.plot(day_indices, abbott_corrected_pct, color=primary_color, marker='o', linewidth=line_width, linestyle=line_style, markersize=marker_size)
+        ax_abbott.plot(elapsed_days, abbott_corrected_pct, color=primary_color, marker='o', linewidth=line_width, linestyle=line_style, markersize=marker_size)
         ax_abbott.set_xlabel('Observation Time / Days', fontsize=13, fontweight='bold', labelpad=7)
         ax_abbott.set_ylabel('Corrected Mortality / %', fontsize=13, fontweight='bold', labelpad=7)
-        ax_abbott.set_xlim(-0.3, num_days-0.5)
+        ax_abbott.set_xlim(-0.1, max_time * 1.05)
         ax_abbott.set_ylim(-2, 102)
-        ax_abbott.set_xticks(day_indices)
+        ax_abbott.set_xticks(elapsed_days)
         ax_abbott.set_xticklabels(day_labels, rotation=45, ha="right")
         ax_abbott.spines['top'].set_visible(False)
         ax_abbott.spines['right'].set_visible(False)
@@ -1298,14 +1328,16 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         LINE_STYLES = {"Solid": "-", "Dashed": "--", "Dotted": ":", "Dash-Dot": "-."}
 
         with st.expander("🎨 Customize File Colors, Shapes & Display Names", expanded=True):
-            st.markdown("Set custom labels, distinct colors, marker shapes, and line styles for each CSV file:")
+            st.markdown("Set custom labels, distinct colors, marker shapes, line styles, and legend layout for each CSV file:")
             
-            col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
+            col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4 = st.columns(4)
             with col_ctrl1:
-                jitter_val = st.slider("Point Separation / Anti-Overlap Offset", min_value=0.0, max_value=0.05, value=0.018, step=0.003, help="Offsets data points horizontally side-by-side so markers from different CSV files don't overlap directly on top of each other.")
+                jitter_val = st.slider("Point Separation / Anti-Overlap Offset", min_value=0.0, max_value=0.05, value=0.015, step=0.003, help="Offsets data points horizontally side-by-side so markers from different CSV files don't overlap directly on top of each other.")
             with col_ctrl2:
                 legend_detail = st.selectbox("Legend Detail Level", ["File Name + Equation + R²", "File Name + R² Only", "File Name Only"], index=0)
             with col_ctrl3:
+                legend_loc_opt = st.selectbox("Legend Placement", ["Top (Horizontal)", "Bottom (Horizontal)", "Right (Outside)"], index=0)
+            with col_ctrl4:
                 show_grid = st.checkbox("Show Chart Gridlines", value=True)
 
             st.markdown("---")
@@ -1362,7 +1394,7 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
             st.markdown(f'<div class="kpi-card"><div class="kpi-val">{max_lt50_str}</div><div class="kpi-label">Slowest LT50</div></div>', unsafe_allow_html=True)
         with k4:
             r2_list = [b['r_squared'] for b in processed_batches]
-            avg_r2 = f"{np.mean(r2_list):.3f}" if r2_list else "N/A"
+            avg_r2 = f"{np.mean(r2_list):.4f}" if r2_list else "N/A"
             st.markdown(f'<div class="kpi-card"><div class="kpi-val">{avg_r2}</div><div class="kpi-label">Avg Probit R²</div></div>', unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -1372,18 +1404,18 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
 
         # 1. Probit Regression CSV File Comparison Plot
         st.subheader("1. Probit Regression Time-Mortality Comparison Across CSV Files")
-        fig_p_multi, ax_p = plt.subplots(figsize=(9.2, 6.2), dpi=300)
+        fig_p_multi, ax_p = plt.subplots(figsize=(10.5, 6.0), dpi=300)
 
         if show_grid:
-            ax_p.grid(True, linestyle='--', alpha=0.35, color='#cccccc', zorder=1)
+            ax_p.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         all_log_times = []
         for b in processed_batches:
             if len(b['log_time']) > 0:
                 all_log_times.extend(b['log_time'])
 
-        x_min = min(all_log_times) - 0.1 if all_log_times else 0.0
-        x_max = max(all_log_times) + 0.1 if all_log_times else 1.0
+        x_min = max(-0.02, min(all_log_times) - 0.04) if all_log_times else 0.0
+        x_max = max(all_log_times) + 0.08 if all_log_times else 1.0
         x_fit_line = np.linspace(x_min, x_max, 100)
 
         legend_handles_probit = []
@@ -1397,7 +1429,7 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
             ax_p.scatter(
                 x_jittered, b['probit_y'],
                 color=b['color'], marker=b['marker'],
-                s=marker_size**2 * 1.6, edgecolor='black', linewidth=1.2,
+                s=marker_size**2 * 1.5, edgecolor='black', linewidth=1.1,
                 zorder=4
             )
 
@@ -1412,9 +1444,9 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
 
             # Single combined legend entry (Marker shape + Line style + Label)
             if legend_detail == "File Name + Equation + R²":
-                lbl = f"{b['name']} (Fit: Y={b['intercept_a']:.2f}+{b['slope_b']:.2f}x, R²={b['r_squared']:.3f})"
+                lbl = f"{b['name']} (Y={b['intercept_a']:.2f}+{b['slope_b']:.2f}x, R²={b['r_squared']:.4f})"
             elif legend_detail == "File Name + R² Only":
-                lbl = f"{b['name']} (R²={b['r_squared']:.3f})"
+                lbl = f"{b['name']} (R²={b['r_squared']:.4f})"
             else:
                 lbl = b['name']
 
@@ -1425,22 +1457,44 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
             )
 
         legend_handles_probit.append(
-            Line2D([0], [0], color='#333333', linestyle='--', linewidth=1.4, label='LT50 Reference (Probit = 5.0)')
+            Line2D([0], [0], color='#64748b', linestyle='--', linewidth=1.5, label='LT50 Reference (Probit = 5.0)')
         )
 
-        ax_p.axhline(5.0, color='#333333', linestyle='--', linewidth=1.4, zorder=2)
-        ax_p.set_xlabel('Log10(Observation Time / Days)', fontsize=13, fontweight='bold', labelpad=8)
-        ax_p.set_ylabel('Probit Value (P)', fontsize=13, fontweight='bold', labelpad=8)
-        ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=15, fontweight='bold', pad=12)
+        ax_p.axhline(5.0, color='#64748b', linestyle='--', linewidth=1.5, zorder=2)
+        ax_p.set_xlim(x_min, x_max)
+        ax_p.set_ylim(2.5, 9.2)
+        ax_p.yaxis.set_major_locator(MultipleLocator(1.0))
+
+        ax_p.set_xlabel('Log10(Observation Time / Days)', fontsize=12.5, fontweight='bold', labelpad=8)
+        ax_p.set_ylabel('Probit Value (P)', fontsize=12.5, fontweight='bold', labelpad=8)
+        ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=14)
         ax_p.spines['top'].set_visible(False)
         ax_p.spines['right'].set_visible(False)
-        ax_p.legend(handles=legend_handles_probit, bbox_to_anchor=(1.03, 1), loc='upper left', frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.5)
-        fig_p_multi.tight_layout()
+
+        # Place Legend based on user option
+        if legend_loc_opt == "Top (Horizontal)":
+            ax_p.legend(
+                handles=legend_handles_probit, loc='lower center', bbox_to_anchor=(0.5, 1.02),
+                ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.0
+            )
+            fig_p_multi.tight_layout()
+        elif legend_loc_opt == "Bottom (Horizontal)":
+            ax_p.legend(
+                handles=legend_handles_probit, loc='upper center', bbox_to_anchor=(0.5, -0.16),
+                ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.0
+            )
+            fig_p_multi.tight_layout()
+        else: # Right (Outside)
+            ax_p.legend(
+                handles=legend_handles_probit, loc='upper left', bbox_to_anchor=(1.02, 1.0),
+                frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.0
+            )
+            fig_p_multi.tight_layout(rect=[0, 0, 0.72, 1.0])
 
         st.pyplot(fig_p_multi)
 
         buf_p = io.BytesIO()
-        fig_p_multi.savefig(buf_p, format="png", dpi=300)
+        fig_p_multi.savefig(buf_p, format="png", dpi=300, bbox_inches='tight')
         multi_plot_images['probit_multi_csv_comparison.png'] = buf_p.getvalue()
         st.download_button("📥 Download Probit Comparison Chart (PNG)", data=buf_p.getvalue(), file_name="probit_multi_csv_comparison.png", mime="image/png")
         plt.close(fig_p_multi)
@@ -1449,12 +1503,19 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
 
         cols_m = st.columns(2)
 
+        # Gather max observation time across all datasets for uniform linear scale
+        all_times_flat = []
+        for b in processed_batches:
+            if len(b['times_numeric']) > 0:
+                all_times_flat.extend(b['times_numeric'])
+        max_t_flat = max(all_times_flat) if all_times_flat else 8.0
+
         # 2. Mortality % Comparison
         with cols_m[0]:
             st.subheader("2. Mortality Curve Comparison")
-            fig_m_multi, ax_m = plt.subplots(figsize=(7.0, 5.2), dpi=300)
+            fig_m_multi, ax_m = plt.subplots(figsize=(7.5, 5.2), dpi=300)
             if show_grid:
-                ax_m.grid(True, linestyle='--', alpha=0.35, color='#cccccc', zorder=1)
+                ax_m.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
             m_handles = []
             for idx, b in enumerate(processed_batches):
@@ -1471,19 +1532,26 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                            linewidth=line_width, markersize=marker_size, markeredgecolor='black',
                            label=b['name'])
                 )
-            m_handles.append(Line2D([0], [0], color='#333333', linestyle=':', linewidth=1.2, label='50% Mortality'))
-            ax_m.axhline(50.0, color='#333333', linestyle=':', linewidth=1.2, zorder=2)
+            m_handles.append(Line2D([0], [0], color='#64748b', linestyle=':', linewidth=1.4, label='50% Mortality'))
+            ax_m.axhline(50.0, color='#64748b', linestyle=':', linewidth=1.4, zorder=2)
             ax_m.set_xlabel('Observation Time / Days', fontsize=12, fontweight='bold', labelpad=7)
             ax_m.set_ylabel('Abbott Corrected Mortality / %', fontsize=12, fontweight='bold', labelpad=7)
+            ax_m.set_xlim(0.8, max_t_flat * 1.05)
             ax_m.set_ylim(-2, 105)
             ax_m.spines['top'].set_visible(False)
             ax_m.spines['right'].set_visible(False)
-            ax_m.legend(handles=m_handles, loc='best', frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9)
-            fig_m_multi.tight_layout()
+
+            if legend_loc_opt == "Right (Outside)":
+                ax_m.legend(handles=m_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_m_multi.tight_layout(rect=[0, 0, 0.72, 1.0])
+            else:
+                ax_m.legend(handles=m_handles, loc='upper left', frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_m_multi.tight_layout()
+
             st.pyplot(fig_m_multi)
 
             buf_m = io.BytesIO()
-            fig_m_multi.savefig(buf_m, format="png", dpi=300)
+            fig_m_multi.savefig(buf_m, format="png", dpi=300, bbox_inches='tight')
             multi_plot_images['mortality_multi_csv_comparison.png'] = buf_m.getvalue()
             st.download_button("📥 Download Mortality Comparison Chart", data=buf_m.getvalue(), file_name="mortality_multi_csv_comparison.png", mime="image/png")
             plt.close(fig_m_multi)
@@ -1491,9 +1559,9 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         # 3. Survival % Comparison
         with cols_m[1]:
             st.subheader("3. Survival Curve Comparison")
-            fig_s_multi, ax_s = plt.subplots(figsize=(7.0, 5.2), dpi=300)
+            fig_s_multi, ax_s = plt.subplots(figsize=(7.5, 5.2), dpi=300)
             if show_grid:
-                ax_s.grid(True, linestyle='--', alpha=0.35, color='#cccccc', zorder=1)
+                ax_s.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
             s_handles = []
             for idx, b in enumerate(processed_batches):
@@ -1510,19 +1578,26 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                            linewidth=line_width, markersize=marker_size, markeredgecolor='black',
                            label=b['name'])
                 )
-            s_handles.append(Line2D([0], [0], color='#333333', linestyle=':', linewidth=1.2, label='50% Survival'))
-            ax_s.axhline(50.0, color='#333333', linestyle=':', linewidth=1.2, zorder=2)
+            s_handles.append(Line2D([0], [0], color='#64748b', linestyle=':', linewidth=1.4, label='50% Survival'))
+            ax_s.axhline(50.0, color='#64748b', linestyle=':', linewidth=1.4, zorder=2)
             ax_s.set_xlabel('Observation Time / Days', fontsize=12, fontweight='bold', labelpad=7)
             ax_s.set_ylabel('Survival Rate / %', fontsize=12, fontweight='bold', labelpad=7)
+            ax_s.set_xlim(0.8, max_t_flat * 1.05)
             ax_s.set_ylim(-2, 105)
             ax_s.spines['top'].set_visible(False)
             ax_s.spines['right'].set_visible(False)
-            ax_s.legend(handles=s_handles, loc='best', frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9)
-            fig_s_multi.tight_layout()
+
+            if legend_loc_opt == "Right (Outside)":
+                ax_s.legend(handles=s_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_s_multi.tight_layout(rect=[0, 0, 0.72, 1.0])
+            else:
+                ax_s.legend(handles=s_handles, loc='upper left', frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_s_multi.tight_layout()
+
             st.pyplot(fig_s_multi)
 
             buf_s = io.BytesIO()
-            fig_s_multi.savefig(buf_s, format="png", dpi=300)
+            fig_s_multi.savefig(buf_s, format="png", dpi=300, bbox_inches='tight')
             multi_plot_images['survival_multi_csv_comparison.png'] = buf_s.getvalue()
             st.download_button("📥 Download Survival Comparison Chart", data=buf_s.getvalue(), file_name="survival_multi_csv_comparison.png", mime="image/png")
             plt.close(fig_s_multi)
