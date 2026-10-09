@@ -33,23 +33,101 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
+:root {
+    --bg-main: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    --text-main: #0f172a;
+    --text-muted: #475569;
+    --card-bg: rgba(255, 255, 255, 0.9);
+    --card-border: rgba(203, 213, 225, 0.8);
+    --card-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+    --hero-bg: linear-gradient(135deg, rgba(254, 243, 199, 0.85) 0%, rgba(253, 230, 138, 0.45) 50%, rgba(255, 255, 255, 0.95) 100%);
+    --hero-border: rgba(245, 158, 11, 0.4);
+    --hero-title-gradient: linear-gradient(135deg, #d97706 0%, #b45309 60%, #78350f 100%);
+    --kpi-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(241, 245, 249, 0.85) 100%);
+    --kpi-border: rgba(203, 213, 225, 0.85);
+    --kpi-val-color: #d97706;
+    --kpi-label-color: #475569;
+    --sidebar-bg: #ffffff;
+    --sidebar-border: rgba(226, 232, 240, 0.9);
+    --sidebar-heading: #b45309;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-main: linear-gradient(180deg, #0b0f19 0%, #0f172a 100%);
+        --text-main: #f3f4f6;
+        --text-muted: #9ca3af;
+        --card-bg: rgba(30, 41, 59, 0.6);
+        --card-border: rgba(255, 255, 255, 0.08);
+        --card-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
+        --hero-bg: linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(217, 119, 6, 0.08) 50%, rgba(15, 23, 42, 0.9) 100%);
+        --hero-border: rgba(245, 158, 11, 0.3);
+        --hero-title-gradient: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #fef3c7 100%);
+        --kpi-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+        --kpi-border: rgba(255, 255, 255, 0.1);
+        --kpi-val-color: #fbbf24;
+        --kpi-label-color: #9ca3af;
+        --sidebar-bg: #0b0f19;
+        --sidebar-border: rgba(255, 255, 255, 0.08);
+        --sidebar-heading: #fbbf24;
+    }
+}
+
+[data-theme="dark"], html[data-theme="dark"], body[data-theme="dark"], .stApp[data-theme="dark"] {
+    --bg-main: linear-gradient(180deg, #0b0f19 0%, #0f172a 100%);
+    --text-main: #f3f4f6;
+    --text-muted: #9ca3af;
+    --card-bg: rgba(30, 41, 59, 0.6);
+    --card-border: rgba(255, 255, 255, 0.08);
+    --card-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
+    --hero-bg: linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(217, 119, 6, 0.08) 50%, rgba(15, 23, 42, 0.9) 100%);
+    --hero-border: rgba(245, 158, 11, 0.3);
+    --hero-title-gradient: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #fef3c7 100%);
+    --kpi-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+    --kpi-border: rgba(255, 255, 255, 0.1);
+    --kpi-val-color: #fbbf24;
+    --kpi-label-color: #9ca3af;
+    --sidebar-bg: #0b0f19;
+    --sidebar-border: rgba(255, 255, 255, 0.08);
+    --sidebar-heading: #fbbf24;
+}
+
+[data-theme="light"], html[data-theme="light"], body[data-theme="light"], .stApp[data-theme="light"] {
+    --bg-main: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    --text-main: #0f172a;
+    --text-muted: #475569;
+    --card-bg: rgba(255, 255, 255, 0.9);
+    --card-border: rgba(203, 213, 225, 0.8);
+    --card-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+    --hero-bg: linear-gradient(135deg, rgba(254, 243, 199, 0.85) 0%, rgba(253, 230, 138, 0.45) 50%, rgba(255, 255, 255, 0.95) 100%);
+    --hero-border: rgba(245, 158, 11, 0.4);
+    --hero-title-gradient: linear-gradient(135deg, #d97706 0%, #b45309 60%, #78350f 100%);
+    --kpi-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(241, 245, 249, 0.85) 100%);
+    --kpi-border: rgba(203, 213, 225, 0.85);
+    --kpi-val-color: #d97706;
+    --kpi-label-color: #475569;
+    --sidebar-bg: #ffffff;
+    --sidebar-border: rgba(226, 232, 240, 0.9);
+    --sidebar-heading: #b45309;
+}
+
 html, body, [class*="css"] {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 .stApp {
-    background: linear-gradient(180deg, #0b0f19 0%, #0f172a 100%);
-    color: #f3f4f6;
+    background: var(--bg-main) !important;
+    color: var(--text-main) !important;
 }
 
 /* Hero Header Banner */
 .hero-card {
-    background: linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(217, 119, 6, 0.08) 50%, rgba(15, 23, 42, 0.9) 100%);
-    border: 1px solid rgba(245, 158, 11, 0.3);
+    background: var(--hero-bg) !important;
+    border: 1px solid var(--hero-border) !important;
     border-radius: 20px;
     padding: 30px 38px;
     margin-bottom: 24px;
-    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--card-shadow);
     position: relative;
     overflow: hidden;
 }
@@ -69,7 +147,7 @@ html, body, [class*="css"] {
     font-size: 32px;
     font-weight: 800;
     letter-spacing: -0.5px;
-    background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #fef3c7 100%);
+    background: var(--hero-title-gradient);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin-bottom: 6px;
@@ -77,26 +155,26 @@ html, body, [class*="css"] {
 
 .hero-subtitle {
     font-size: 14px;
-    color: #9ca3af;
+    color: var(--text-muted) !important;
     font-weight: 500;
 }
 
 /* Glass Section Container */
 .glass-card {
-    background: rgba(30, 41, 59, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--card-bg) !important;
+    border: 1px solid var(--card-border) !important;
     border-radius: 16px;
     padding: 22px;
     margin-bottom: 24px;
     backdrop-filter: blur(12px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+    box-shadow: var(--card-shadow);
 }
 
 /* Section Titles */
 .section-title {
     font-size: 19px;
     font-weight: 700;
-    color: #f8fafc;
+    color: var(--text-main) !important;
     margin-top: 10px;
     margin-bottom: 14px;
     display: flex;
@@ -106,12 +184,13 @@ html, body, [class*="css"] {
 
 /* KPI Cards */
 .kpi-card {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: var(--kpi-bg) !important;
+    border: 1px solid var(--kpi-border) !important;
     border-radius: 14px;
     padding: 16px 20px;
     text-align: center;
     backdrop-filter: blur(10px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
     transition: transform 0.2s ease, border-color 0.2s ease;
 }
 .kpi-card:hover {
@@ -121,15 +200,28 @@ html, body, [class*="css"] {
 .kpi-val {
     font-size: 26px;
     font-weight: 800;
-    color: #fbbf24;
+    color: var(--kpi-val-color) !important;
 }
 .kpi-label {
     font-size: 11px;
     font-weight: 700;
-    color: #9ca3af;
+    color: var(--kpi-label-color) !important;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-top: 4px;
+}
+
+/* Sidebar Headings */
+.sidebar-h2 {
+    color: var(--sidebar-heading) !important;
+    font-size: 20px;
+    font-weight: 800;
+    margin-bottom: 15px;
+}
+.sidebar-h3 {
+    color: var(--sidebar-heading) !important;
+    font-size: 16px;
+    font-weight: 700;
 }
 
 /* Buttons */
@@ -165,14 +257,14 @@ html, body, [class*="css"] {
 
 /* Sidebar Overrides */
 [data-testid="stSidebar"] {
-    background-color: #0b0f19 !important;
-    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: var(--sidebar-bg) !important;
+    border-right: 1px solid var(--sidebar-border) !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # Sidebar Design
-st.sidebar.markdown("<h2 style='color: #fbbf24; font-size: 20px; font-weight: 800; margin-bottom: 15px;'>🎨 Chart Studio Controls</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h2 class='sidebar-h2'>🎨 Chart Studio Controls</h2>", unsafe_allow_html=True)
 primary_color = st.sidebar.color_picker("Primary Color (Mortality)", "#ef4444")
 secondary_color = st.sidebar.color_picker("Secondary Color (Survival)", "#f59e0b")
 line_width = st.sidebar.slider("Line Width", min_value=1.0, max_value=5.0, value=2.4)
@@ -180,7 +272,7 @@ marker_size = st.sidebar.slider("Marker Size", min_value=3.0, max_value=12.0, va
 font_size = st.sidebar.slider("Font Size", min_value=8, max_value=18, value=11)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("<h3 style='color: #fbbf24; font-size: 16px; font-weight: 700;'>🧪 Statistical Models</h3>", unsafe_allow_html=True)
+st.sidebar.markdown("<h3 class='sidebar-h3'>🧪 Statistical Models</h3>", unsafe_allow_html=True)
 abbott_c = st.sidebar.number_input("Abbott Control Mortality (C) %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, help="Consider all as alive by default (C=0)")
 
 line_style_map = {"Solid": "-", "Dashed": "--", "Dotted": ":", "Dash-Dot": "-."}
@@ -188,7 +280,7 @@ selected_line_style = st.sidebar.selectbox("Select Line Style", list(line_style_
 line_style = line_style_map[selected_line_style]
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("<h3 style='color: #fbbf24; font-size: 16px; font-weight: 700;'>🔥 Heatmap Palette</h3>", unsafe_allow_html=True)
+st.sidebar.markdown("<h3 class='sidebar-h3'>🔥 Heatmap Palette</h3>", unsafe_allow_html=True)
 hm_alive_color = st.sidebar.color_picker("Alive Color", "#10b981")
 hm_behavior_color = st.sidebar.color_picker("Behavior Change Color", "#f59e0b")
 hm_dead_color = st.sidebar.color_picker("Dead Color", "#ef4444")
