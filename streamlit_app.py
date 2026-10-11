@@ -506,6 +506,8 @@ def parse_batch_df(raw_df, abbott_c=0.0):
 
     # Reconcile LT50 / LT90:
     # If 50% mortality was actually observed during the study, LT50 cannot exceed the observed time
+    start_time = batch_elapsed_days[0] if len(batch_elapsed_days) > 0 else 1.0
+
     if not np.isnan(empirical_lt50):
         if np.isnan(probit_lt50) or probit_lt50 > batch_elapsed_days[-1] or abs(probit_lt50 - empirical_lt50) > 1.0:
             lt50 = empirical_lt50
@@ -522,6 +524,10 @@ def parse_batch_df(raw_df, abbott_c=0.0):
     else:
         lt90 = probit_lt90
 
+    # Convert absolute day numbers to true elapsed time since the first observation
+    lt50_elapsed = lt50 - start_time if not np.isnan(lt50) else np.nan
+    lt90_elapsed = lt90 - start_time if not np.isnan(lt90) else np.nan
+
     return {
         'num_days': num_days,
         'num_bees': num_bees,
@@ -537,8 +543,8 @@ def parse_batch_df(raw_df, abbott_c=0.0):
         'slope_b': b,
         'r_squared': r_squared,
         'r_val': r_val,
-        'lt50': lt50,
-        'lt90': lt90
+        'lt50': lt50_elapsed,
+        'lt90': lt90_elapsed
     }
 
 
@@ -1785,6 +1791,11 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         # 4. LT50 Bar Chart Comparison
         st.markdown("---")
         st.subheader("4. Lethal Time 50% (LT₅₀) Bar Chart Comparison")
+        
+        # FIX 2: Warn user if only 1 file is uploaded
+        if len(processed_batches) == 1:
+            st.info("💡 **Note:** You have only uploaded 1 CSV file. The LT₅₀ Bar Chart is designed for comparing **multiple** files. For detailed single-file metrics, please refer to the 'Single CSV Analysis' tab or the Summary Table below.")
+        
         fig_lt, ax_lt = plt.subplots(figsize=(8.0, 4.8), dpi=300)
         if show_grid:
             ax_lt.grid(True, linestyle='--', alpha=0.35, color='#cccccc', axis='y', zorder=1)
@@ -1793,22 +1804,32 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         lt50_vals = [b['lt50'] for b in processed_batches]
         b_colors = [b['color'] for b in processed_batches]
 
-        bars = ax_lt.bar(b_names, lt50_vals, color=b_colors, edgecolor='black', width=0.45)
+        # FIX 3: Dynamic bar width so it doesn't look weird with 1-2 files
+        bar_width = 0.5 if len(processed_batches) <= 3 else 0.45
+
+        bars = ax_lt.bar(b_names, lt50_vals, color=b_colors, edgecolor='black', width=bar_width)
+        max_val = max([v for v in lt50_vals if not np.isnan(v)], default=1.0)
         for bar in bars:
             h = bar.get_height()
             if not np.isnan(h) and h > 0:
-                ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + 0.15, f"{int(round(h))} Days", ha='center', va='bottom', fontweight='bold', fontsize=10.5)
+                # Format to 1 decimal place for scientific accuracy (e.g., "8.9 Days")
+                label_text = f"{h:.1f} Days" if h % 1 != 0 else f"{int(h)} Days"
+                ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + (max_val * 0.03 if max_val > 0 else 0.15), label_text, ha='center', va='bottom', fontweight='bold', fontsize=10.5)
 
         ax_lt.yaxis.set_major_locator(MaxNLocator(integer=True))
-        ax_lt.set_ylabel('LT50 (Days)', fontsize=12, fontweight='bold')
+        ax_lt.set_ylabel('LT50 (Elapsed Days)', fontsize=12, fontweight='bold')
         ax_lt.set_title('Calculated LT50 across CSV Files', fontsize=14, fontweight='bold', pad=12)
         ax_lt.spines['top'].set_visible(False)
         ax_lt.spines['right'].set_visible(False)
+        
+        # FIX 3: Rotate x-axis labels to prevent filename cutoff
+        plt.xticks(rotation=45, ha='right')
+        
         fig_lt.tight_layout()
         st.pyplot(fig_lt)
 
         buf_lt = io.BytesIO()
-        fig_lt.savefig(buf_lt, format="png", dpi=300)
+        fig_lt.savefig(buf_lt, format="png", dpi=300, bbox_inches='tight')
         multi_plot_images['lt50_bar_comparison.png'] = buf_lt.getvalue()
         plt.close(fig_lt)
 
