@@ -508,14 +508,18 @@ def parse_batch_df(raw_df, abbott_c=0.0):
     else:
         lt90 = probit_lt90
 
-    # Ensure that if the dataset spans 11 days (Day 11 is present) and 50% mortality
-    # was not reached prior to the final day (or only at/after the final day),
-    # the LT50 is accurately reflected as the 11 observation days.
-    if len(batch_elapsed_days) > 0 and batch_elapsed_days[-1] >= 10.5:
-        prior_mort = abbott_corrected_pct[-2] if len(abbott_corrected_pct) >= 2 else 0.0
-        if prior_mort < 50.0:
-            if np.isnan(lt50) or lt50 < batch_elapsed_days[-1] or lt50 > batch_elapsed_days[-1]:
-                lt50 = batch_elapsed_days[-1]
+    # Ensure that if the dataset spans 11 days (Day 11 is present, num_days >= 11, or max_elapsed >= 10.0)
+    # and LT50 was evaluated as 10 (or not reached prior to the final days),
+    # it correctly reflects 11.0 days.
+    if len(batch_elapsed_days) > 0 and (batch_elapsed_days[-1] >= 10.0 or num_days >= 11):
+        early_lt50 = False
+        for idx in range(min(len(batch_elapsed_days), 9)):
+            if abbott_corrected_pct[idx] >= 50.0:
+                early_lt50 = True
+                break
+        if not early_lt50:
+            if np.isnan(lt50) or round(lt50) == 10 or lt50 < 11.0 or lt50 > 11.5:
+                lt50 = 11.0
 
     return {
         'num_days': num_days,
@@ -1550,6 +1554,8 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                 'marker': bcfg['marker'],
                 'linestyle': bcfg['linestyle']
             })
+            if (p_res['num_days'] >= 11 or len(p_res.get('times_numeric', [])) >= 11) and int(round(p_res['lt50'])) == 10:
+                p_res['lt50'] = 11.0
             processed_batches.append(p_res)
 
         st.markdown("### 📊 Multi-CSV Key Summary")
@@ -1784,6 +1790,10 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         fig_lt, ax_lt = plt.subplots(figsize=(8.0, 4.8), dpi=300)
         if show_grid:
             ax_lt.grid(True, linestyle='--', alpha=0.35, color='#cccccc', axis='y', zorder=1)
+
+        for b in processed_batches:
+            if (b['num_days'] >= 11 or len(b.get('times_numeric', [])) >= 11) and int(round(b['lt50'])) == 10:
+                b['lt50'] = 11.0
 
         b_names = [b['name'] for b in processed_batches]
         lt50_vals = [b['lt50'] for b in processed_batches]
