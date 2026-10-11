@@ -437,34 +437,17 @@ def parse_batch_df(raw_df, abbott_c=0.0):
 
     survival_pct = 100.0 - mortality_pct
 
-    # Empirical calculation of observed LT50 & LT90 via linear interpolation
+    # Empirical calculation of observed LT50 & LT90
+    # For discrete daily observations, use the FIRST day when threshold is reached/exceeded
     empirical_lt50 = np.nan
     empirical_lt90 = np.nan
     for idx in range(len(batch_elapsed_days)):
         if abbott_corrected_pct[idx] >= 50.0 and np.isnan(empirical_lt50):
-            if idx == 0:
-                empirical_lt50 = batch_elapsed_days[0]
-            else:
-                m_prev = abbott_corrected_pct[idx - 1]
-                m_curr = abbott_corrected_pct[idx]
-                t_prev = batch_elapsed_days[idx - 1]
-                t_curr = batch_elapsed_days[idx]
-                if m_curr > m_prev:
-                    empirical_lt50 = t_prev + (50.0 - m_prev) / (m_curr - m_prev) * (t_curr - t_prev)
-                else:
-                    empirical_lt50 = t_curr
+            # Use the current day when 50% is first reached (not interpolation)
+            empirical_lt50 = batch_elapsed_days[idx]
         if abbott_corrected_pct[idx] >= 90.0 and np.isnan(empirical_lt90):
-            if idx == 0:
-                empirical_lt90 = batch_elapsed_days[0]
-            else:
-                m_prev = abbott_corrected_pct[idx - 1]
-                m_curr = abbott_corrected_pct[idx]
-                t_prev = batch_elapsed_days[idx - 1]
-                t_curr = batch_elapsed_days[idx]
-                if m_curr > m_prev:
-                    empirical_lt90 = t_prev + (90.0 - m_prev) / (m_curr - m_prev) * (t_curr - t_prev)
-                else:
-                    empirical_lt90 = t_curr
+            # Use the current day when 90% is first reached (not interpolation)
+            empirical_lt90 = batch_elapsed_days[idx]
 
     # Standard Finney empirical probit transformation
     p_lower = 0.5 / max(num_bees, 10)
