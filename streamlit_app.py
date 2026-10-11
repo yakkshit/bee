@@ -420,13 +420,23 @@ def parse_batch_df(raw_df, abbott_c=0.0):
             states_matrix = []
             for bc in bee_cols:
                 states_matrix.append(df_copy[bc].fillna("A").tolist())
+            
+            # Helper function to get the most recent valid state (A, B, or D)
+            def get_latest_state(bee_states, up_to_day_idx):
+                for k in range(up_to_day_idx, -1, -1):
+                    state = str(bee_states[k]).strip().upper()
+                    if state in ['A', 'B', 'D']:
+                        return state
+                return 'A' # Default to Alive if no prior observation exists
+
             dead_counts = []
             for d_idx in range(num_days):
-                # Cumulative tracking: once a bee dies ('D'), it remains dead on all subsequent days
-                n_dead = sum(1 for states in states_matrix if any(str(states[k]).strip().upper() == 'D' for k in range(d_idx + 1)))
+                # A bee is only dead on day X if its MOST RECENT observation up to day X is 'D'
+                n_dead = sum(1 for states in states_matrix if get_latest_state(states, d_idx) == 'D')
                 dead_counts.append(n_dead)
-            cum_dead_counts = np.maximum.accumulate(np.array(dead_counts))
-            mortality_pct = (cum_dead_counts / num_bees) * 100.0 if num_bees > 0 else np.zeros(num_days)
+                
+            dead_counts = np.array(dead_counts)
+            mortality_pct = (dead_counts / num_bees) * 100.0 if num_bees > 0 else np.zeros(num_days)
         else:
             mortality_pct = np.zeros(num_days)
 
@@ -784,10 +794,18 @@ def render_single_batch_tab():
     durations = []
     events = []
 
+    def get_latest_state_single(bee_states, up_to_day_idx):
+        for k in range(up_to_day_idx, -1, -1):
+            state = str(bee_states[k]).strip().upper()
+            if state in ['A', 'B', 'D']:
+                return state
+        return 'A'
+
     for b_states in states_matrix:
-        if 'D' in b_states:
-            death_row_idx = b_states.index('D')
-            durations.append(elapsed_days[death_row_idx])
+        final_state = get_latest_state_single(b_states, num_days - 1)
+        if final_state == 'D':
+            last_d_idx = max(k for k in range(num_days) if str(b_states[k]).strip().upper() == 'D')
+            durations.append(elapsed_days[last_d_idx])
             events.append(1)
         else:
             durations.append(elapsed_days[-1] if num_days > 0 else 0)
@@ -800,8 +818,7 @@ def render_single_batch_tab():
     dead_counts = []
 
     for d_idx in range(num_days):
-        # Cumulative tracking: once a bee dies ('D'), it remains dead on all subsequent days
-        n_dead = sum(1 for states in states_matrix if any(str(states[k]).strip().upper() == 'D' for k in range(d_idx + 1)))
+        n_dead = sum(1 for states in states_matrix if get_latest_state_single(states, d_idx) == 'D')
         alive_counts.append(num_bees - n_dead)
         dead_counts.append(n_dead)
 
