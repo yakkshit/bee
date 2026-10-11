@@ -335,8 +335,20 @@ def parse_time_data(df):
         match = re.match(r"(?:Day|Dy|D)?\s*(\d+)(?:_(\d+)(?::(\d+))?)?", t_str, re.IGNORECASE)
         if match and match.group(1):
             d = int(match.group(1))
-            h = int(match.group(2)) if match.group(2) else 0
-            m = int(match.group(3)) if match.group(3) else 0
+            h = 0
+            m = 0
+            if match.group(2):
+                potential_hour = int(match.group(2))
+                has_minutes = bool(match.group(3))
+                # If there are explicit minutes (e.g. 1_2:10) or a 2-digit hour in valid range (e.g. 1_23), treat as hour.
+                # Single-digit numbers without minutes (e.g. Day 1_2) are observation indices -> ignore as h = 0 so Day 1_2 = 1.0.
+                if has_minutes:
+                    h = potential_hour if potential_hour <= 23 else 0
+                    m = int(match.group(3)) if match.group(3) else 0
+                elif 6 <= potential_hour <= 23:
+                    h = potential_hour
+                else:
+                    h = 0  # Observation index (e.g. Day 1_2 is observation #2 on Day 1 -> 1.0 days)
             # Ensure base day >= 1.0 so log10(t) >= 0
             d_base = max(1, d)
             return d_base * 1.0 + (h / 24.0) + (m / 1440.0)
