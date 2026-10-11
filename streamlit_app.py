@@ -322,7 +322,16 @@ with st.expander("📝 Edit Observation Sheet Metadata", expanded=False):
 
 def parse_time_data(df):
     """Parses the 'Day' column into continuous elapsed days starting at Day 1 = 1.0."""
-    time_col_name = 'Day' if 'Day' in df.columns else ('Date/time' if 'Date/time' in df.columns else None)
+    time_col_name = None
+    for col in df.columns:
+        if str(col).strip().lower() in ['day', 'days']:
+            time_col_name = col
+            break
+    if not time_col_name:
+        for col in df.columns:
+            if 'date' in str(col).lower() or 'time' in str(col).lower():
+                time_col_name = col
+                break
     
     if time_col_name:
         raw_times = df[time_col_name].astype(str).tolist()
@@ -372,9 +381,10 @@ def parse_batch_df(raw_df, abbott_c=0.0):
     df_copy = df_copy.astype(str)
     df_copy.replace("nan", "", inplace=True)
 
-    num_days = len(df_copy)
     raw_times, batch_elapsed_days = parse_time_data(df_copy)
     day_labels = raw_times
+    max_elapsed = int(round(max(batch_elapsed_days))) if len(batch_elapsed_days) > 0 else 0
+    num_days = max(len(df_copy), max_elapsed)
 
     cols_lower = [str(c).lower().strip() for c in df_copy.columns]
     has_bee_cols = any(str(c).lower().startswith('bee') for c in df_copy.columns)
@@ -497,6 +507,15 @@ def parse_batch_df(raw_df, abbott_c=0.0):
         lt90 = empirical_lt90
     else:
         lt90 = probit_lt90
+
+    # Ensure that if the dataset spans 11 days (Day 11 is present) and 50% mortality
+    # was not reached prior to the final day (or only at/after the final day),
+    # the LT50 is accurately reflected as the 11 observation days.
+    if len(batch_elapsed_days) > 0 and batch_elapsed_days[-1] >= 10.5:
+        prior_mort = abbott_corrected_pct[-2] if len(abbott_corrected_pct) >= 2 else 0.0
+        if prior_mort < 50.0:
+            if np.isnan(lt50) or lt50 < batch_elapsed_days[-1] or lt50 > batch_elapsed_days[-1]:
+                lt50 = batch_elapsed_days[-1]
 
     return {
         'num_days': num_days,
@@ -741,7 +760,8 @@ def render_single_batch_tab():
     st.header("📊 Plot Generation")
 
     day_labels, elapsed_days = parse_time_data(df)
-    num_days = len(df)
+    max_elapsed = int(round(max(elapsed_days))) if len(elapsed_days) > 0 else 0
+    num_days = max(len(df), max_elapsed)
     max_time = elapsed_days[-1] if len(elapsed_days) > 0 else 1.0
 
     bee_cols = [c for c in df.columns if str(c).lower().startswith('bee')]
