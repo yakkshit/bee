@@ -497,8 +497,6 @@ def parse_batch_df(raw_df, abbott_c=0.0):
         lt90 = empirical_lt90
     else:
         lt90 = probit_lt90
-    else:
-        lt90 = probit_lt90
 
     return {
         'num_days': num_days,
