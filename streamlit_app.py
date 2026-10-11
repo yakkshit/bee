@@ -331,14 +331,15 @@ def parse_time_data(df):
         
     def parse_to_days(t_str):
         t_str = str(t_str).strip()
-        # Match patterns like Day1, Day 1, Day1_2, Day1_2:10
-        match = re.match(r"Day\s*(\d+)(?:_(\d+)(?::(\d+))?)?", t_str, re.IGNORECASE)
-        if match:
+        # Match patterns like Day1, Day 1, Dy 1, Dy 1_2, D1_2, Day1_2:10, 1_2
+        match = re.match(r"(?:Day|Dy|D)?\s*(\d+)(?:_(\d+)(?::(\d+))?)?", t_str, re.IGNORECASE)
+        if match and match.group(1):
             d = int(match.group(1))
             h = int(match.group(2)) if match.group(2) else 0
             m = int(match.group(3)) if match.group(3) else 0
-            # Day 1 = 1.0 day, Day 1_2 = 1 + 2/24 = 1.0833 days, Day 2 = 2.0 days
-            return d * 1.0 + (h / 24.0) + (m / 1440.0)
+            # Ensure base day >= 1.0 so log10(t) >= 0
+            d_base = max(1, d)
+            return d_base * 1.0 + (h / 24.0) + (m / 1440.0)
         try:
             val = float(t_str)
             return val if val >= 1.0 else val + 1.0
@@ -388,10 +389,12 @@ def parse_batch_df(raw_df, abbott_c=0.0):
             totals = pd.to_numeric(df_copy[total_col], errors='coerce').fillna(10).values
             deads = pd.to_numeric(df_copy[dead_col], errors='coerce').fillna(0).values
             num_bees = int(np.max(totals)) if len(totals) > 0 else 10
-            mortality_pct = np.clip((deads / totals) * 100.0, 0, 100)
+            cum_deads = np.maximum.accumulate(deads)
+            mortality_pct = np.clip((cum_deads / totals) * 100.0, 0, 100)
         elif dead_col:
-            mortality_pct = pd.to_numeric(df_copy[dead_col], errors='coerce').fillna(0).values
-            mortality_pct = np.clip(mortality_pct, 0, 100)
+            deads = pd.to_numeric(df_copy[dead_col], errors='coerce').fillna(0).values
+            cum_deads = np.maximum.accumulate(deads)
+            mortality_pct = np.clip(cum_deads, 0, 100)
             num_bees = 10
         else:
             mortality_pct = np.zeros(num_days)
@@ -407,7 +410,8 @@ def parse_batch_df(raw_df, abbott_c=0.0):
                 states_matrix.append(df_copy[bc].fillna("A").tolist())
             dead_counts = []
             for d_idx in range(num_days):
-                n_dead = sum(1 for states in states_matrix if str(states[d_idx]).strip() == 'D')
+                # Cumulative tracking: once a bee dies ('D'), it remains dead on all subsequent days
+                n_dead = sum(1 for states in states_matrix if any(str(states[k]).strip().upper() == 'D' for k in range(d_idx + 1)))
                 dead_counts.append(n_dead)
             dead_counts = np.array(dead_counts)
             mortality_pct = (dead_counts / num_bees) * 100.0 if num_bees > 0 else np.zeros(num_days)
@@ -421,32 +425,102 @@ def parse_batch_df(raw_df, abbott_c=0.0):
 
     survival_pct = 100.0 - mortality_pct
 
-    clipped_mort = np.clip(abbott_corrected_pct, 0.01, 99.99)
-    probit_vals = norm.ppf(clipped_mort / 100.0) + 5.0
+    # Empirical calculation of observed LT50 & LT90 via linear interpolation
+    empirical_lt50 = np.nan
+    empirical_lt90 = np.nan
+    for idx in range(len(batch_elapsed_days)):
+        if abbott_corrected_pct[idx] >= 50.0 and np.isnan(empirical_lt50):
+            if idx == 0:
+                empirical_lt50 = batch_elapsed_days[0]
+            else:
+                m_prev = abbott_corrected_pct[idx - 1]
+                m_curr = abbott_corrected_pct[idx]
+                t_prev = batch_elapsed_days[idx - 1]
+                t_curr = batch_elapsed_days[idx]
+                if m_curr > m_prev:
+                    empirical_lt50 = t_prev + (50.0 - m_prev) / (m_curr - m_prev) * (t_curr - t_prev)
+                else:
+                    empirical_lt50 = t_curr
+        if abbott_corrected_pct[idx] >= 90.0 and np.isnan(empirical_lt90):
+            if idx == 0:
+                empirical_lt90 = batch_elapsed_days[0]
+            else:
+                m_prev = abbott_corrected_pct[idx - 1]
+                m_curr = abbott_corrected_pct[idx]
+                t_prev = batch_elapsed_days[idx - 1]
+                t_curr = batch_elapsed_days[idx]
+                if m_curr > m_prev:
+                    empirical_lt90 = t_prev + (90.0 - m_prev) / (m_curr - m_prev) * (t_curr - t_prev)
+                else:
+                    empirical_lt90 = t_curr
 
-    log_time = []
-    probit_y = []
+    # Standard Finney empirical probit transformation
+    p_lower = 0.5 / max(num_bees, 10)
+    p_upper = 1.0 - p_lower
+    
+    probit_vals = []
+    for m in abbott_corrected_pct:
+        p_val = m / 100.0
+        p_clamped = np.clip(p_val, p_lower, p_upper)
+        probit_vals.append(norm.ppf(p_clamped) + 5.0)
+    probit_vals = np.array(probit_vals)
+
+    # For regression: avoid artificial flattening from multiple leading 0% days.
+    # Start from the observation immediately preceding the first mortality event.
+    first_nonzero_idx = next((i for i, m in enumerate(abbott_corrected_pct) if m > 0), len(abbott_corrected_pct) - 1)
+    start_idx = max(0, first_nonzero_idx - 1)
+
+    reg_log_time = []
+    reg_probit_y = []
+    for i in range(start_idx, len(batch_elapsed_days)):
+        t = batch_elapsed_days[i]
+        if t > 0:
+            reg_log_time.append(np.log10(t))
+            reg_probit_y.append(probit_vals[i])
+
+    reg_log_time = np.array(reg_log_time)
+    reg_probit_y = np.array(reg_probit_y)
+
+    # Plot points for all days
+    plot_log_time = []
+    plot_probit_y = []
     for i, t in enumerate(batch_elapsed_days):
         if t > 0:
-            log_time.append(np.log10(t))
-            probit_y.append(probit_vals[i])
+            plot_log_time.append(np.log10(t))
+            plot_probit_y.append(probit_vals[i])
+    plot_log_time = np.array(plot_log_time)
+    plot_probit_y = np.array(plot_probit_y)
 
-    log_time = np.array(log_time)
-    probit_y = np.array(probit_y)
-
-
-    if len(log_time) > 1:
-        res = linregress(log_time, probit_y)
+    if len(reg_log_time) > 1:
+        res = linregress(reg_log_time, reg_probit_y)
         a, b, r_val = res.intercept, res.slope, res.rvalue
         r_squared = r_val ** 2
-        if b != 0:
-            lt50 = 10 ** ((5.0 - a) / b)
-            lt90 = 10 ** ((6.28155 - a) / b)
+        if b > 0:
+            probit_lt50 = 10 ** ((5.0 - a) / b)
+            probit_lt90 = 10 ** ((6.28155 - a) / b)
         else:
-            lt50, lt90 = np.nan, np.nan
+            probit_lt50, probit_lt90 = np.nan, np.nan
     else:
         a, b, r_val, r_squared = 0.0, 0.0, 0.0, 0.0
-        lt50, lt90 = np.nan, np.nan
+        probit_lt50, probit_lt90 = np.nan, np.nan
+
+    # Reconcile LT50 / LT90:
+    # If 50% mortality was actually observed during the study, LT50 cannot exceed the observed time
+    if not np.isnan(empirical_lt50):
+        if np.isnan(probit_lt50) or probit_lt50 > batch_elapsed_days[-1] or abs(probit_lt50 - empirical_lt50) > 1.0:
+            lt50 = empirical_lt50
+        else:
+            lt50 = probit_lt50
+    else:
+        lt50 = probit_lt50
+
+    if not np.isnan(empirical_lt90):
+        if np.isnan(probit_lt90) or probit_lt90 > batch_elapsed_days[-1] or abs(probit_lt90 - empirical_lt90) > 1.0:
+            lt90 = empirical_lt90
+        else:
+            lt90 = probit_lt90
+    else:
+        lt90 = probit_lt90
 
     return {
         'num_days': num_days,
@@ -457,8 +531,8 @@ def parse_batch_df(raw_df, abbott_c=0.0):
         'abbott_corrected_pct': abbott_corrected_pct,
         'survival_pct': survival_pct,
         'probit_vals': probit_vals,
-        'log_time': log_time,
-        'probit_y': probit_y,
+        'log_time': plot_log_time,
+        'probit_y': plot_probit_y,
         'intercept_a': a,
         'slope_b': b,
         'r_squared': r_squared,
@@ -732,7 +806,8 @@ def render_single_batch_tab():
     dead_counts = []
 
     for d_idx in range(num_days):
-        n_dead = sum(1 for states in states_matrix if str(states[d_idx]).strip() == 'D')
+        # Cumulative tracking: once a bee dies ('D'), it remains dead on all subsequent days
+        n_dead = sum(1 for states in states_matrix if any(str(states[k]).strip().upper() == 'D' for k in range(d_idx + 1)))
         alive_counts.append(num_bees - n_dead)
         dead_counts.append(n_dead)
 
@@ -747,19 +822,27 @@ def render_single_batch_tab():
         abbott_corrected_pct = (mortality_pct - abbott_c) / (100.0 - abbott_c) * 100.0
         abbott_corrected_pct = np.clip(abbott_corrected_pct, 0, 100)
 
-    # Probit Regression (Time-Mortality)
-    clipped_mort = np.clip(abbott_corrected_pct, 0.01, 99.99)
-    probit_vals = norm.ppf(clipped_mort / 100.0) + 5
+    # Finney empirical probit transformation
+    p_lower = 0.5 / max(num_bees, 10)
+    p_upper = 1.0 - p_lower
+    probit_vals = np.array([norm.ppf(np.clip(m / 100.0, p_lower, p_upper)) + 5.0 for m in abbott_corrected_pct])
 
-    log_time = []
-    probit_y = []
-    for i, d in enumerate(elapsed_days):
+    first_nonzero_idx = next((i for i, m in enumerate(abbott_corrected_pct) if m > 0), len(abbott_corrected_pct) - 1)
+    start_idx = max(0, first_nonzero_idx - 1)
+
+    reg_log_time = []
+    reg_probit_y = []
+    for i in range(start_idx, len(elapsed_days)):
+        d = elapsed_days[i]
         if d > 0:
-            log_time.append(np.log10(d))
-            probit_y.append(probit_vals[i])
+            reg_log_time.append(np.log10(d))
+            reg_probit_y.append(probit_vals[i])
 
-    if len(log_time) > 1:
-        res = linregress(log_time, probit_y)
+    log_time = np.array([np.log10(d) for d in elapsed_days if d > 0])
+    probit_y = probit_vals[:len(log_time)]
+
+    if len(reg_log_time) > 1:
+        res = linregress(reg_log_time, reg_probit_y)
         probit_a, probit_b, probit_r = res.intercept, res.slope, res.rvalue
     else:
         probit_a, probit_b, probit_r = 0, 0, 0
@@ -1714,7 +1797,7 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         for bar in bars:
             h = bar.get_height()
             if not np.isnan(h) and h > 0:
-                ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + 0.15, f"{int(h)} Days", ha='center', va='bottom', fontweight='bold', fontsize=10.5)
+                ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + 0.15, f"{int(round(h))} Days", ha='center', va='bottom', fontweight='bold', fontsize=10.5)
 
         ax_lt.yaxis.set_major_locator(MaxNLocator(integer=True))
         ax_lt.set_ylabel('LT50 (Days)', fontsize=12, fontweight='bold')
