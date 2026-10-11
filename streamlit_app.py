@@ -425,8 +425,8 @@ def parse_batch_df(raw_df, abbott_c=0.0):
                 # Cumulative tracking: once a bee dies ('D'), it remains dead on all subsequent days
                 n_dead = sum(1 for states in states_matrix if any(str(states[k]).strip().upper() == 'D' for k in range(d_idx + 1)))
                 dead_counts.append(n_dead)
-            dead_counts = np.array(dead_counts)
-            mortality_pct = (dead_counts / num_bees) * 100.0 if num_bees > 0 else np.zeros(num_days)
+            cum_dead_counts = np.maximum.accumulate(np.array(dead_counts))
+            mortality_pct = (cum_dead_counts / num_bees) * 100.0 if num_bees > 0 else np.zeros(num_days)
         else:
             mortality_pct = np.zeros(num_days)
 
@@ -500,23 +500,21 @@ def parse_batch_df(raw_df, abbott_c=0.0):
         probit_lt50, probit_lt90 = np.nan, np.nan
 
     # Reconcile LT50 / LT90:
-    # ALWAYS prefer empirical (observed) values since observations are discrete daily checks.
-    # Probit regression produces fractional days which are misleading for discrete data.
     start_time = batch_elapsed_days[0] if len(batch_elapsed_days) > 0 else 1.0
 
     if not np.isnan(empirical_lt50):
-        lt50 = empirical_lt50  # Always use empirical when available
+        lt50 = empirical_lt50
     else:
-        lt50 = probit_lt50  # Fall back to probit only if no empirical value exists
+        lt50 = probit_lt50
 
     if not np.isnan(empirical_lt90):
         lt90 = empirical_lt90
     else:
         lt90 = probit_lt90
 
-    # Convert to elapsed days and round to nearest integer
-    lt50_elapsed = round(lt50 - start_time) if not np.isnan(lt50) else np.nan
-    lt90_elapsed = round(lt90 - start_time) if not np.isnan(lt90) else np.nan
+    # Convert to elapsed days - use ceil to ensure full days elapsed and handle floating-point imprecision
+    lt50_elapsed = int(np.ceil(lt50 - start_time)) if not np.isnan(lt50) else np.nan
+    lt90_elapsed = int(np.ceil(lt90 - start_time)) if not np.isnan(lt90) else np.nan
 
     return {
         'num_days': num_days,
