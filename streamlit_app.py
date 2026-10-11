@@ -517,28 +517,23 @@ def parse_batch_df(raw_df, abbott_c=0.0):
         probit_lt50, probit_lt90 = np.nan, np.nan
 
     # Reconcile LT50 / LT90:
-    # If 50% mortality was actually observed during the study, LT50 cannot exceed the observed time
+    # ALWAYS prefer empirical (observed) values since observations are discrete daily checks.
+    # Probit regression produces fractional days which are misleading for discrete data.
     start_time = batch_elapsed_days[0] if len(batch_elapsed_days) > 0 else 1.0
 
     if not np.isnan(empirical_lt50):
-        if np.isnan(probit_lt50) or probit_lt50 > batch_elapsed_days[-1] or abs(probit_lt50 - empirical_lt50) > 1.0:
-            lt50 = empirical_lt50
-        else:
-            lt50 = probit_lt50
+        lt50 = empirical_lt50  # Always use empirical when available
     else:
-        lt50 = probit_lt50
+        lt50 = probit_lt50  # Fall back to probit only if no empirical value exists
 
     if not np.isnan(empirical_lt90):
-        if np.isnan(probit_lt90) or probit_lt90 > batch_elapsed_days[-1] or abs(probit_lt90 - empirical_lt90) > 1.0:
-            lt90 = empirical_lt90
-        else:
-            lt90 = probit_lt90
+        lt90 = empirical_lt90
     else:
         lt90 = probit_lt90
 
-    # Convert absolute day numbers to true elapsed time since the first observation
-    lt50_elapsed = lt50 - start_time if not np.isnan(lt50) else np.nan
-    lt90_elapsed = lt90 - start_time if not np.isnan(lt90) else np.nan
+    # Convert to elapsed days and round to nearest integer
+    lt50_elapsed = round(lt50 - start_time) if not np.isnan(lt50) else np.nan
+    lt90_elapsed = round(lt90 - start_time) if not np.isnan(lt90) else np.nan
 
     return {
         'num_days': num_days,
@@ -1580,10 +1575,10 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
             st.markdown(f'<div class="kpi-card"><div class="kpi-val">{len(processed_batches)}</div><div class="kpi-label">CSV Files</div></div>', unsafe_allow_html=True)
         with k2:
             valid_lt50 = [b['lt50'] for b in processed_batches if not np.isnan(b['lt50'])]
-            min_lt50_str = f"{min(valid_lt50):.2f}d" if valid_lt50 else "N/A"
+            min_lt50_str = f"{int(round(min(valid_lt50)))}d" if valid_lt50 else "N/A"
             st.markdown(f'<div class="kpi-card"><div class="kpi-val">{min_lt50_str}</div><div class="kpi-label">Fastest LT50</div></div>', unsafe_allow_html=True)
         with k3:
-            max_lt50_str = f"{max(valid_lt50):.2f}d" if valid_lt50 else "N/A"
+            max_lt50_str = f"{int(round(max(valid_lt50)))}d" if valid_lt50 else "N/A"
             st.markdown(f'<div class="kpi-card"><div class="kpi-val">{max_lt50_str}</div><div class="kpi-label">Slowest LT50</div></div>', unsafe_allow_html=True)
         with k4:
             r2_list = [b['r_squared'] for b in processed_batches]
@@ -1824,8 +1819,7 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         for bar in bars:
             h = bar.get_height()
             if not np.isnan(h) and h > 0:
-                # Format to 1 decimal place for scientific accuracy (e.g., "8.9 Days")
-                label_text = f"{h:.1f} Days" if h % 1 != 0 else f"{int(h)} Days"
+                label_text = f"{int(round(h))} Days"
                 ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + (max_val * 0.03 if max_val > 0 else 0.15), label_text, ha='center', va='bottom', fontweight='bold', fontsize=10.5)
 
         ax_lt.yaxis.set_major_locator(MaxNLocator(integer=True))
@@ -1850,8 +1844,8 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         st.subheader("📋 Multi-CSV Probit Comparative Metrics Table")
         summary_rows = []
         for b in processed_batches:
-            lt50_str = f"{b['lt50']:.2f}" if not np.isnan(b['lt50']) else "N/A"
-            lt90_str = f"{b['lt90']:.2f}" if not np.isnan(b['lt90']) else "N/A"
+            lt50_str = f"{int(round(b['lt50']))}" if not np.isnan(b['lt50']) else "N/A"
+            lt90_str = f"{int(round(b['lt90']))}" if not np.isnan(b['lt90']) else "N/A"
             summary_rows.append({
                 "CSV File Name": b['name'],
                 "Sample Size (N)": b['num_bees'],
