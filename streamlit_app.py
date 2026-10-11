@@ -322,16 +322,7 @@ with st.expander("📝 Edit Observation Sheet Metadata", expanded=False):
 
 def parse_time_data(df):
     """Parses the 'Day' column into continuous elapsed days starting at Day 1 = 1.0."""
-    time_col_name = None
-    for col in df.columns:
-        if str(col).strip().lower() in ['day', 'days']:
-            time_col_name = col
-            break
-    if not time_col_name:
-        for col in df.columns:
-            if 'date' in str(col).lower() or 'time' in str(col).lower():
-                time_col_name = col
-                break
+    time_col_name = 'Day' if 'Day' in df.columns else ('Date/time' if 'Date/time' in df.columns else None)
     
     if time_col_name:
         raw_times = df[time_col_name].astype(str).tolist()
@@ -381,10 +372,9 @@ def parse_batch_df(raw_df, abbott_c=0.0):
     df_copy = df_copy.astype(str)
     df_copy.replace("nan", "", inplace=True)
 
+    num_days = len(df_copy)
     raw_times, batch_elapsed_days = parse_time_data(df_copy)
     day_labels = raw_times
-    max_elapsed = int(round(max(batch_elapsed_days))) if len(batch_elapsed_days) > 0 else 0
-    num_days = max(len(df_copy), max_elapsed)
 
     cols_lower = [str(c).lower().strip() for c in df_copy.columns]
     has_bee_cols = any(str(c).lower().startswith('bee') for c in df_copy.columns)
@@ -435,15 +425,34 @@ def parse_batch_df(raw_df, abbott_c=0.0):
 
     survival_pct = 100.0 - mortality_pct
 
-    # Empirical calculation of observed LT50 & LT90:
-    # In discrete observation assays, the observed LT50 is the day on which cumulative mortality reaches >= 50%
+    # Empirical calculation of observed LT50 & LT90 via linear interpolation
     empirical_lt50 = np.nan
     empirical_lt90 = np.nan
     for idx in range(len(batch_elapsed_days)):
         if abbott_corrected_pct[idx] >= 50.0 and np.isnan(empirical_lt50):
-            empirical_lt50 = batch_elapsed_days[idx]
+            if idx == 0:
+                empirical_lt50 = batch_elapsed_days[0]
+            else:
+                m_prev = abbott_corrected_pct[idx - 1]
+                m_curr = abbott_corrected_pct[idx]
+                t_prev = batch_elapsed_days[idx - 1]
+                t_curr = batch_elapsed_days[idx]
+                if m_curr > m_prev:
+                    empirical_lt50 = t_prev + (50.0 - m_prev) / (m_curr - m_prev) * (t_curr - t_prev)
+                else:
+                    empirical_lt50 = t_curr
         if abbott_corrected_pct[idx] >= 90.0 and np.isnan(empirical_lt90):
-            empirical_lt90 = batch_elapsed_days[idx]
+            if idx == 0:
+                empirical_lt90 = batch_elapsed_days[0]
+            else:
+                m_prev = abbott_corrected_pct[idx - 1]
+                m_curr = abbott_corrected_pct[idx]
+                t_prev = batch_elapsed_days[idx - 1]
+                t_curr = batch_elapsed_days[idx]
+                if m_curr > m_prev:
+                    empirical_lt90 = t_prev + (90.0 - m_prev) / (m_curr - m_prev) * (t_curr - t_prev)
+                else:
+                    empirical_lt90 = t_curr
 
     # Standard Finney empirical probit transformation
     p_lower = 0.5 / max(num_bees, 10)
@@ -496,30 +505,22 @@ def parse_batch_df(raw_df, abbott_c=0.0):
         probit_lt50, probit_lt90 = np.nan, np.nan
 
     # Reconcile LT50 / LT90:
-    # If 50% mortality was actually observed during the study, use the observed day.
-    # Otherwise, use the probit regression model extrapolation.
+    # If 50% mortality was actually observed during the study, LT50 cannot exceed the observed time
     if not np.isnan(empirical_lt50):
-        lt50 = empirical_lt50
+        if np.isnan(probit_lt50) or probit_lt50 > batch_elapsed_days[-1] or abs(probit_lt50 - empirical_lt50) > 1.0:
+            lt50 = empirical_lt50
+        else:
+            lt50 = probit_lt50
     else:
         lt50 = probit_lt50
 
     if not np.isnan(empirical_lt90):
-        lt90 = empirical_lt90
+        if np.isnan(probit_lt90) or probit_lt90 > batch_elapsed_days[-1] or abs(probit_lt90 - empirical_lt90) > 1.0:
+            lt90 = empirical_lt90
+        else:
+            lt90 = probit_lt90
     else:
         lt90 = probit_lt90
-
-    # Ensure that if the dataset spans 11 days (Day 11 is present, num_days >= 11, or max_elapsed >= 10.0)
-    # and LT50 was evaluated as 10 (or not reached prior to the final days),
-    # it correctly reflects 11.0 days.
-    if len(batch_elapsed_days) > 0 and (batch_elapsed_days[-1] >= 10.0 or num_days >= 11):
-        early_lt50 = False
-        for idx in range(min(len(batch_elapsed_days), 9)):
-            if abbott_corrected_pct[idx] >= 50.0:
-                early_lt50 = True
-                break
-        if not early_lt50:
-            if np.isnan(lt50) or round(lt50) == 10 or lt50 < 11.0 or lt50 > 11.5:
-                lt50 = 11.0
 
     return {
         'num_days': num_days,
@@ -764,8 +765,7 @@ def render_single_batch_tab():
     st.header("📊 Plot Generation")
 
     day_labels, elapsed_days = parse_time_data(df)
-    max_elapsed = int(round(max(elapsed_days))) if len(elapsed_days) > 0 else 0
-    num_days = max(len(df), max_elapsed)
+    num_days = len(df)
     max_time = elapsed_days[-1] if len(elapsed_days) > 0 else 1.0
 
     bee_cols = [c for c in df.columns if str(c).lower().startswith('bee')]
@@ -1554,8 +1554,6 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                 'marker': bcfg['marker'],
                 'linestyle': bcfg['linestyle']
             })
-            if (p_res['num_days'] >= 11 or len(p_res.get('times_numeric', [])) >= 11) and int(round(p_res['lt50'])) == 10:
-                p_res['lt50'] = 11.0
             processed_batches.append(p_res)
 
         st.markdown("### 📊 Multi-CSV Key Summary")
@@ -1790,10 +1788,6 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         fig_lt, ax_lt = plt.subplots(figsize=(8.0, 4.8), dpi=300)
         if show_grid:
             ax_lt.grid(True, linestyle='--', alpha=0.35, color='#cccccc', axis='y', zorder=1)
-
-        for b in processed_batches:
-            if (b['num_days'] >= 11 or len(b.get('times_numeric', [])) >= 11) and int(round(b['lt50'])) == 10:
-                b['lt50'] = 11.0
 
         b_names = [b['name'] for b in processed_batches]
         lt50_vals = [b['lt50'] for b in processed_batches]
