@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 from matplotlib.lines import Line2D
 
-from modules.parser import parse_batch_df
+from modules.parser import parse_batch_df, calculate_lt_percentiles
 from modules.survival_stats import render_log_rank_analysis, render_cox_regression_analysis
 
 
@@ -382,25 +382,71 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
             st.download_button("📥 Download Survival Comparison Chart", data=buf_s.getvalue(), file_name="survival_multi_csv_comparison.png", mime="image/png")
             plt.close(fig_s_multi)
 
-        # 4. LT50 Bar Chart Comparison
+        # 4. Lethal Time (LTx) Bar Chart Comparison (User-Selectable Metric)
         st.markdown("---")
-        st.subheader("4. Lethal Time 50% (LT₅₀) Bar Chart Comparison")
+        st.subheader("4. Lethal Time (LTₓ) Comparative Bar Chart")
+
+        c_lt_choice, c_lt_slider = st.columns([2, 1])
+        with c_lt_choice:
+            lt_selection = st.selectbox(
+                "Select Lethal Metric to Compare Across CSV Files:",
+                [
+                    "LT10 (10% Lethality / Early Onset)",
+                    "LT20 (20% Lethality)",
+                    "LT25 (25% Lethality - 1st Quartile)",
+                    "LT30 (30% Lethality)",
+                    "LT50 (50% Lethality - Standard Median)",
+                    "LT75 (75% Lethality - 3rd Quartile)",
+                    "LT90 (90% Lethality - Acute Lethality)",
+                    "Custom Percentile..."
+                ],
+                index=4,
+                key="multi_lt_selector"
+            )
+
+        if lt_selection == "Custom Percentile...":
+            with c_lt_slider:
+                chosen_target_pct = st.slider("Target Mortality (%)", min_value=1, max_value=99, value=50, step=1, key="multi_custom_pct")
+                active_metric_label = f"LT{chosen_target_pct}"
+        else:
+            chosen_target_pct = int(lt_selection.split()[0].replace("LT", ""))
+            active_metric_label = f"LT{chosen_target_pct}"
 
         if len(processed_batches) == 1:
-            st.info("💡 **Note:** You have only uploaded 1 CSV file. The LT₅₀ Bar Chart is designed for comparing **multiple** files. For detailed single-file metrics, please refer to the 'Single CSV Analysis' tab or the Summary Table below.")
+            st.info(f"💡 **Note:** You have only uploaded 1 CSV file. The {active_metric_label} Bar Chart is designed for comparing **multiple** files. For detailed single-file metrics, please refer to the 'Single CSV Analysis' tab or the Summary Table below.")
+
+        # Compute the selected LT_X for each batch
+        b_names = []
+        b_chosen_lt_vals = []
+        b_colors = []
+
+        for b in processed_batches:
+            b_names.append(b['name'])
+            b_colors.append(b['color'])
+
+            # Look up or compute on the fly
+            rec = calculate_lt_percentiles(
+                intercept_a=b['intercept_a'],
+                slope_b=b['slope_b'],
+                start_time=b.get('start_time', 1.0),
+                times_numeric=b.get('batch_elapsed_days', b.get('times_numeric', [])),
+                mortality_pct=b.get('abbott_corrected_pct', b.get('mortality_pct', [])),
+                percentiles=[chosen_target_pct]
+            )
+            if rec and len(rec) > 0:
+                val = rec[0]['effective_elapsed_int']
+            else:
+                val = np.nan
+            b_chosen_lt_vals.append(val)
 
         fig_lt, ax_lt = plt.subplots(figsize=(8.0, 4.8), dpi=300)
         if show_grid:
             ax_lt.grid(True, linestyle='--', alpha=0.35, color='#cccccc', axis='y', zorder=1)
 
-        b_names = [b['name'] for b in processed_batches]
-        lt50_vals = [b['lt50'] for b in processed_batches]
-        b_colors = [b['color'] for b in processed_batches]
-
         bar_width = 0.5 if len(processed_batches) <= 3 else 0.45
+        bars = ax_lt.bar(b_names, b_chosen_lt_vals, color=b_colors, edgecolor='black', width=bar_width)
+        max_val = max([v for v in b_chosen_lt_vals if not np.isnan(v)], default=1.0)
 
-        bars = ax_lt.bar(b_names, lt50_vals, color=b_colors, edgecolor='black', width=bar_width)
-        max_val = max([v for v in lt50_vals if not np.isnan(v)], default=1.0)
         for bar in bars:
             h = bar.get_height()
             if not np.isnan(h) and h > 0:
@@ -408,29 +454,36 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                 ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + (max_val * 0.03 if max_val > 0 else 0.15), label_text, ha='center', va='bottom', fontweight='bold', fontsize=10.5)
 
         ax_lt.yaxis.set_major_locator(MaxNLocator(integer=True))
-        ax_lt.set_ylabel('LT50 (Elapsed Days)', fontsize=12, fontweight='bold')
-        ax_lt.set_title('Calculated LT50 across CSV Files', fontsize=14, fontweight='bold', pad=12)
+        ax_lt.set_ylabel(f'{active_metric_label} (Elapsed Days)', fontsize=12, fontweight='bold')
+        ax_lt.set_title(f'Calculated {active_metric_label} Across CSV Files', fontsize=14, fontweight='bold', pad=12)
         ax_lt.spines['top'].set_visible(False)
         ax_lt.spines['right'].set_visible(False)
 
         plt.xticks(rotation=45, ha='right')
-
         fig_lt.tight_layout()
         st.pyplot(fig_lt)
 
         buf_lt = io.BytesIO()
         fig_lt.savefig(buf_lt, format="png", dpi=300, bbox_inches='tight')
-        multi_plot_images['lt50_bar_comparison.png'] = buf_lt.getvalue()
+        multi_plot_images[f'{active_metric_label.lower()}_bar_comparison.png'] = buf_lt.getvalue()
         plt.close(fig_lt)
 
         # Comparative Summary Metrics Table
         st.markdown("---")
         st.subheader("📋 Multi-CSV Probit Comparative Metrics Table")
         summary_rows = []
-        for b in processed_batches:
-            lt50_str = f"{int(round(b['lt50']))}" if not np.isnan(b['lt50']) else "N/A"
-            lt90_str = f"{int(round(b['lt90']))}" if not np.isnan(b['lt90']) else "N/A"
-            summary_rows.append({
+        for idx_b, b in enumerate(processed_batches):
+            lt10_val = b.get('lt10', np.nan)
+            lt20_val = b.get('lt20', np.nan)
+            lt50_val = b.get('lt50', np.nan)
+            lt90_val = b.get('lt90', np.nan)
+
+            lt10_str = f"{int(round(lt10_val))}" if not np.isnan(lt10_val) else "N/A"
+            lt20_str = f"{int(round(lt20_val))}" if not np.isnan(lt20_val) else "N/A"
+            lt50_str = f"{int(round(lt50_val))}" if not np.isnan(lt50_val) else "N/A"
+            lt90_str = f"{int(round(lt90_val))}" if not np.isnan(lt90_val) else "N/A"
+
+            row_data = {
                 "CSV File Name": b['name'],
                 "Sample Size (N)": b['num_bees'],
                 "Days Observed": b['num_days'],
@@ -438,10 +491,18 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                 "Slope (b)": round(b['slope_b'], 4),
                 "Intercept (a)": round(b['intercept_a'], 4),
                 "R² Score": round(b['r_squared'], 4),
+                "LT10 (Days)": lt10_str,
+                "LT20 (Days)": lt20_str,
                 "LT50 (Days)": lt50_str,
                 "LT90 (Days)": lt90_str,
-                "Final Mortality (%)": f"{b['mortality_pct'][-1]:.1f}%" if len(b['mortality_pct']) > 0 else "N/A"
-            })
+            }
+
+            if active_metric_label not in ["LT10", "LT20", "LT50", "LT90"]:
+                cur_chosen_val = b_chosen_lt_vals[idx_b]
+                row_data[f"{active_metric_label} (Days)"] = f"{int(round(cur_chosen_val))}" if not np.isnan(cur_chosen_val) else "N/A"
+
+            row_data["Final Mortality (%)"] = f"{b['mortality_pct'][-1]:.1f}%" if len(b['mortality_pct']) > 0 else "N/A"
+            summary_rows.append(row_data)
 
         summary_df = pd.DataFrame(summary_rows)
         st.dataframe(summary_df, use_container_width=True)
