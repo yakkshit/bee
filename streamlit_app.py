@@ -8,7 +8,8 @@ from matplotlib.lines import Line2D
 from scipy.optimize import curve_fit
 
 from scipy.stats import norm, linregress
-from lifelines import KaplanMeierFitter
+from lifelines import KaplanMeierFitter, CoxPHFitter
+from lifelines.statistics import logrank_test, multivariate_logrank_test, pairwise_logrank_test
 import io
 import base64
 import zipfile
@@ -526,6 +527,74 @@ def parse_batch_df(raw_df, abbott_c=0.0):
     lt50_elapsed = int(np.ceil(lt50 - start_time)) if not np.isnan(lt50) else np.nan
     lt90_elapsed = int(np.ceil(lt90 - start_time)) if not np.isnan(lt90) else np.nan
 
+    # Extract individual bee level survival data for Log-Rank and Cox Regression
+    individual_bees = []
+    if len(bee_cols) > 0:
+        for idx_b, bc in enumerate(bee_cols):
+            b_states = states_matrix[idx_b]
+            final_state = get_latest_state(b_states, num_days - 1)
+
+            # Find consumption column for this bee
+            cons_candidates = [
+                bc.replace("Bee ", "Cons ") + " (µL)",
+                bc.replace("Bee ", "Cons ") + " (uL)",
+                bc.replace("Bee", "Cons")
+            ]
+            cons_vals = []
+            for candidate in cons_candidates:
+                matched = [c for c in df_copy.columns if candidate.lower() in str(c).lower()]
+                if matched:
+                    cons_vals = pd.to_numeric(df_copy[matched[0]], errors='coerce').fillna(0.0).tolist()
+                    break
+
+            if final_state == 'D':
+                d_star = num_days - 1
+                for k in range(num_days - 1, -1, -1):
+                    if get_latest_state(b_states, k) == 'D':
+                        d_star = k
+                    else:
+                        break
+                dur = float(batch_elapsed_days[d_star]) if d_star < len(batch_elapsed_days) else float(batch_elapsed_days[-1])
+                ev = 1
+                alive_cons = cons_vals[:d_star+1] if cons_vals else []
+            else:
+                dur = float(batch_elapsed_days[-1]) if len(batch_elapsed_days) > 0 else 1.0
+                ev = 0
+                alive_cons = cons_vals
+
+            mean_cons = float(np.mean(alive_cons)) if len(alive_cons) > 0 else 0.0
+            total_cons = float(np.sum(alive_cons)) if len(alive_cons) > 0 else 0.0
+
+            temp_val = np.nan
+            humid_val = np.nan
+            for c in df_copy.columns:
+                cl = str(c).lower()
+                if 'temp' in cl:
+                    try:
+                        temp_val = float(pd.to_numeric(df_copy[c], errors='coerce').mean())
+                    except Exception:
+                        pass
+                elif 'humid' in cl:
+                    try:
+                        humid_val = float(pd.to_numeric(df_copy[c], errors='coerce').mean())
+                    except Exception:
+                        pass
+
+            treatment_val = "Batch"
+            if 'Treatment' in df_copy.columns and pd.notna(df_copy['Treatment'].iloc[0]):
+                treatment_val = str(df_copy['Treatment'].iloc[0]).strip()
+
+            individual_bees.append({
+                'bee_id': bc,
+                'duration': max(dur, 0.5),
+                'event': ev,
+                'mean_consumption': mean_cons,
+                'total_consumption': total_cons,
+                'temp': temp_val if not np.isnan(temp_val) else 25.0,
+                'humidity': humid_val if not np.isnan(humid_val) else 60.0,
+                'treatment': treatment_val
+            })
+
     return {
         'num_days': num_days,
         'num_bees': num_bees,
@@ -542,8 +611,416 @@ def parse_batch_df(raw_df, abbott_c=0.0):
         'r_squared': r_squared,
         'r_val': r_val,
         'lt50': lt50_elapsed,
-        'lt90': lt90_elapsed
+        'lt90': lt90_elapsed,
+        'individual_bees': pd.DataFrame(individual_bees)
     }
+
+
+def extract_individual_bee_survival(df_in, batch_name="Batch", elapsed_days=None):
+    """
+    Extracts individual bee level survival data:
+    - duration: Elapsed observation time to death or censoring
+    - event: 1 (dead) or 0 (censored/alive)
+    - mean_consumption: Average daily consumption (µL) while alive
+    - total_consumption: Total consumption (µL) while alive
+    - temp: Mean temperature (°C)
+    - humidity: Mean humidity (%)
+    Strictly adheres to the Resurrected Bee observation correction rule.
+    """
+    df_copy = df_in.copy()
+    bee_cols = [c for c in df_copy.columns if str(c).lower().startswith('bee')]
+    num_days = len(df_copy)
+
+    if elapsed_days is None:
+        batch_times, _, _ = parse_time_data(df_copy)
+        if len(batch_times) > 0:
+            start_t = batch_times[0]
+            elapsed_days = np.array([t - start_t + 1.0 for t in batch_times])
+        else:
+            elapsed_days = np.arange(1.0, num_days + 1.0)
+
+    def get_latest_state(bee_states, up_to_day_idx):
+        for k in range(up_to_day_idx, -1, -1):
+            state = str(bee_states[k]).strip().upper()
+            if state in ['A', 'B', 'D']:
+                return state
+        return 'A'
+
+    temp_val = np.nan
+    humid_val = np.nan
+    for c in df_copy.columns:
+        cl = str(c).lower()
+        if 'temp' in cl:
+            try:
+                temp_val = float(pd.to_numeric(df_copy[c], errors='coerce').mean())
+            except Exception:
+                pass
+        elif 'humid' in cl:
+            try:
+                humid_val = float(pd.to_numeric(df_copy[c], errors='coerce').mean())
+            except Exception:
+                pass
+
+    rows = []
+    for bc in bee_cols:
+        b_states = df_copy[bc].fillna("A").tolist()
+        final_state = get_latest_state(b_states, num_days - 1)
+
+        cons_candidates = [
+            bc.replace("Bee ", "Cons ") + " (µL)",
+            bc.replace("Bee ", "Cons ") + " (uL)",
+            bc.replace("Bee", "Cons")
+        ]
+        cons_vals = []
+        for candidate in cons_candidates:
+            matched = [c for c in df_copy.columns if candidate.lower() in str(c).lower()]
+            if matched:
+                cons_vals = pd.to_numeric(df_copy[matched[0]], errors='coerce').fillna(0.0).tolist()
+                break
+
+        if final_state == 'D':
+            d_star = num_days - 1
+            for k in range(num_days - 1, -1, -1):
+                if get_latest_state(b_states, k) == 'D':
+                    d_star = k
+                else:
+                    break
+            dur = float(elapsed_days[d_star]) if d_star < len(elapsed_days) else float(elapsed_days[-1])
+            ev = 1
+            alive_cons = cons_vals[:d_star+1] if cons_vals else []
+        else:
+            dur = float(elapsed_days[-1]) if len(elapsed_days) > 0 else 1.0
+            ev = 0
+            alive_cons = cons_vals
+
+        mean_cons = float(np.mean(alive_cons)) if len(alive_cons) > 0 else 0.0
+        total_cons = float(np.sum(alive_cons)) if len(alive_cons) > 0 else 0.0
+
+        treatment_val = batch_name
+        if 'Treatment' in df_copy.columns and pd.notna(df_copy['Treatment'].iloc[0]):
+            treatment_val = str(df_copy['Treatment'].iloc[0]).strip()
+
+        rows.append({
+            'bee_id': bc,
+            'cohort': batch_name,
+            'treatment': treatment_val,
+            'duration': max(dur, 0.5),
+            'event': ev,
+            'mean_consumption': mean_cons,
+            'total_consumption': total_cons,
+            'temp': temp_val if not np.isnan(temp_val) else 25.0,
+            'humidity': humid_val if not np.isnan(humid_val) else 60.0,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None):
+    if survival_df is None or survival_df.empty:
+        st.warning("No individual survival data available for Log-Rank test.")
+        return
+
+    groups = [g for g in survival_df[group_col].unique() if pd.notna(g) and str(g).strip() != '']
+    if len(groups) < 2:
+        st.info(f"💡 Log-Rank test requires at least 2 distinct groups to compare. Found {len(groups)} group ({groups[0] if groups else 'None'}).")
+        return
+
+    T = survival_df['duration'].values
+    E = survival_df['event'].values
+    G = survival_df[group_col].values
+
+    try:
+        if len(groups) == 2:
+            m1 = (G == groups[0])
+            m2 = (G == groups[1])
+            res_lr = logrank_test(T[m1], T[m2], event_observed_A=E[m1], event_observed_B=E[m2])
+            chisq = res_lr.test_statistic
+            p_val = res_lr.p_value
+            df_val = 1
+        else:
+            res_lr = multivariate_logrank_test(T, G, event_observed=E)
+            chisq = res_lr.test_statistic
+            p_val = res_lr.p_value
+            df_val = getattr(res_lr, 'degrees_of_freedom', len(groups) - 1)
+    except Exception as ex:
+        st.error(f"Error computing Log-Rank test: {ex}")
+        return
+
+    is_significant = p_val < 0.05
+
+    col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+    with col_k1:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{chisq:.3f}</div><div class="kpi-label">Log-Rank χ² Statistic</div></div>', unsafe_allow_html=True)
+    with col_k2:
+        p_str = "< 0.0001" if p_val < 0.0001 else f"{p_val:.4f}"
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{p_str}</div><div class="kpi-label">p-value (Mantel-Cox)</div></div>', unsafe_allow_html=True)
+    with col_k3:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{df_val}</div><div class="kpi-label">Degrees of Freedom (df)</div></div>', unsafe_allow_html=True)
+    with col_k4:
+        status_txt = "Significant (p < 0.05)" if is_significant else "Not Significant"
+        status_col = "#10b981" if is_significant else "#f59e0b"
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val" style="color: {status_col}; font-size: 1.15rem;">{status_txt}</div><div class="kpi-label">Statistical Status</div></div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    fig_km, ax_km = plt.subplots(figsize=(9.2, 5.5), dpi=300)
+    ax_km.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+
+    km_fitter = KaplanMeierFitter()
+    cohort_summary = []
+    default_palette = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4"]
+
+    for idx_g, g in enumerate(groups):
+        m = (G == g)
+        sub_t = T[m]
+        sub_e = E[m]
+        col = color_map.get(g, default_palette[idx_g % len(default_palette)]) if color_map else default_palette[idx_g % len(default_palette)]
+
+        n_total = len(sub_t)
+        n_events = int(np.sum(sub_e))
+        n_censored = n_total - n_events
+        mort_rate = (n_events / n_total * 100.0) if n_total > 0 else 0.0
+
+        km_fitter.fit(sub_t, event_observed=sub_e, label=f"{g} (n={n_total}, dead={n_events})")
+        km_fitter.plot_survival_function(ax=ax_km, color=col, ci_show=True, ci_alpha=0.12, linewidth=2.2)
+
+        cens_t = sub_t[sub_e == 0]
+        if len(cens_t) > 0:
+            cens_s = [km_fitter.survival_function_at_times(ct).values[0] for ct in cens_t]
+            ax_km.plot(cens_t, cens_s, '+', color=col, markersize=8, markeredgewidth=2)
+
+        median_surv = km_fitter.median_survival_time_
+        median_str = f"{int(round(median_surv))}d" if not np.isnan(median_surv) else "> Max Obs"
+        cohort_summary.append({
+            "Cohort": g,
+            "Sample Size (N)": n_total,
+            "Deaths (Events)": n_events,
+            "Censored": n_censored,
+            "Mortality Rate (%)": f"{mort_rate:.1f}%",
+            "Median Survival (LT50)": median_str
+        })
+
+    ax_km.axhline(0.5, color='#475569', linestyle=':', linewidth=1.3, label='50% Threshold (LT50)')
+    ax_km.set_xlabel('Elapsed Observation Time (Days)', fontsize=12, fontweight='bold', labelpad=8)
+    ax_km.set_ylabel('Survival Probability S(t)', fontsize=12, fontweight='bold', labelpad=8)
+    ax_km.set_ylim(-0.02, 1.05)
+    ax_km.spines['top'].set_visible(False)
+    ax_km.spines['right'].set_visible(False)
+    ax_km.legend(loc='lower left', frameon=True, facecolor='white', framealpha=0.92, fontsize=10)
+    fig_km.tight_layout()
+
+    st.pyplot(fig_km)
+
+    buf_km = io.BytesIO()
+    fig_km.savefig(buf_km, format="png", dpi=300, bbox_inches='tight')
+    st.download_button("📥 Download Kaplan-Meier Multi-Cohort Plot (PNG)", data=buf_km.getvalue(), file_name="logrank_kaplan_meier_comparison.png", mime="image/png")
+    plt.close(fig_km)
+
+    st.markdown("#### 👥 Cohort Survival Breakdown")
+    st.dataframe(pd.DataFrame(cohort_summary), use_container_width=True)
+
+    if len(groups) >= 3:
+        st.markdown("#### 🔄 Post-Hoc Pairwise Log-Rank Comparisons (with Bonferroni Correction)")
+        from itertools import combinations
+        pairs = list(combinations(groups, 2))
+        n_comp = max(1, len(pairs))
+        pairwise_data = []
+        for g1, g2 in pairs:
+            m1 = (G == g1)
+            m2 = (G == g2)
+            try:
+                res_p = logrank_test(T[m1], T[m2], event_observed_A=E[m1], event_observed_B=E[m2])
+                p_raw = res_p.p_value
+                p_bonf = min(1.0, p_raw * n_comp)
+                sig_label = "✅ Significant" if p_bonf < 0.05 else "⚪ Not Significant"
+                pairwise_data.append({
+                    "Comparison": f"{g1} vs. {g2}",
+                    "Chi² (χ²)": round(res_p.test_statistic, 3),
+                    "Raw p-value": f"{p_raw:.4g}",
+                    "Bonferroni p-value": f"{p_bonf:.4g}",
+                    "Status (α = 0.05)": sig_label
+                })
+            except Exception:
+                pass
+        if pairwise_data:
+            st.dataframe(pd.DataFrame(pairwise_data), use_container_width=True)
+
+    st.markdown("#### 💡 Biological Interpretation")
+    if is_significant:
+        st.success(f"**Statistically Significant Difference Detected:** The overall survival distributions differ significantly across cohorts (Mantel-Cox Log-Rank $\\chi^2 = {chisq:.3f}, df = {df_val}, p = {p_str}$). Reject the null hypothesis of equal survival across treatment cohorts.")
+    else:
+        st.info(f"**No Statistically Significant Difference:** The survival distributions do not differ significantly at the $\\alpha = 0.05$ level (Mantel-Cox Log-Rank $\\chi^2 = {chisq:.3f}, df = {df_val}, p = {p_str}$).")
+
+
+def render_cox_regression_analysis(survival_df, group_col='cohort', reference_group=None):
+    if survival_df is None or survival_df.empty:
+        st.warning("No individual survival data available for Cox Regression.")
+        return
+
+    groups = [g for g in survival_df[group_col].unique() if pd.notna(g) and str(g).strip() != ''] if (group_col and group_col in survival_df.columns) else []
+
+    st.markdown("Configure covariates for the Cox Proportional Hazards Model:")
+    c_cfg1, c_cfg2 = st.columns([1, 2])
+    with c_cfg1:
+        if len(groups) > 1:
+            ref_selected = st.selectbox("Baseline Reference Cohort (HR = 1.0)", groups, index=0, key=f"cox_ref_{group_col}")
+        else:
+            ref_selected = groups[0] if groups else None
+
+    with c_cfg2:
+        cov_options = []
+        if 'mean_consumption' in survival_df.columns and survival_df['mean_consumption'].std() > 0:
+            cov_options.append("Mean Consumption (µL/day)")
+        if 'temp' in survival_df.columns and survival_df['temp'].std() > 0:
+            cov_options.append("Temperature (°C)")
+        if 'humidity' in survival_df.columns and survival_df['humidity'].std() > 0:
+            cov_options.append("Humidity (%)")
+
+        selected_covs = st.multiselect("Additional Covariates to Include:", cov_options, default=cov_options, key=f"cox_covs_{group_col}")
+
+    cph_df = survival_df[['duration', 'event']].copy()
+
+    if len(groups) > 1 and ref_selected is not None:
+        dummies = pd.get_dummies(survival_df[group_col], prefix='Cohort', dtype=float)
+        ref_col = f"Cohort_{ref_selected}"
+        if ref_col in dummies.columns:
+            dummies = dummies.drop(columns=[ref_col])
+        cph_df = pd.concat([cph_df, dummies], axis=1)
+
+    if "Mean Consumption (µL/day)" in selected_covs and 'mean_consumption' in survival_df.columns:
+        cph_df['Mean_Consumption_uL'] = survival_df['mean_consumption'].astype(float)
+    if "Temperature (°C)" in selected_covs and 'temp' in survival_df.columns:
+        cph_df['Temp_C'] = survival_df['temp'].astype(float)
+    if "Humidity (%)" in selected_covs and 'humidity' in survival_df.columns:
+        cph_df['Humidity_pct'] = survival_df['humidity'].astype(float)
+
+    covariate_cols = [c for c in cph_df.columns if c not in ['duration', 'event']]
+    if not covariate_cols:
+        st.info("💡 Please include at least one covariate or ensure multiple cohorts exist to fit the Cox Model.")
+        return
+
+    try:
+        cph = CoxPHFitter(penalizer=0.05)
+        cph.fit(cph_df, duration_col='duration', event_col='event')
+    except Exception as ex:
+        st.error(f"Error fitting Cox Proportional Hazards Model: {ex}")
+        return
+
+    c_index = cph.concordance_index_
+    lrt = cph.log_likelihood_ratio_test()
+    aic_val = cph.AIC_partial_
+
+    ck1, ck2, ck3, ck4 = st.columns(4)
+    with ck1:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{c_index:.3f}</div><div class="kpi-label">Concordance Index (C-index)</div></div>', unsafe_allow_html=True)
+    with ck2:
+        lrt_p_str = "< 0.0001" if lrt.p_value < 0.0001 else f"{lrt.p_value:.4f}"
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{lrt.test_statistic:.2f} (p={lrt_p_str})</div><div class="kpi-label">Likelihood Ratio Test (χ²)</div></div>', unsafe_allow_html=True)
+    with ck3:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{aic_val:.2f}</div><div class="kpi-label">Partial AIC</div></div>', unsafe_allow_html=True)
+    with ck4:
+        c_qual = "Strong (>0.80)" if c_index >= 0.8 else ("Good (>0.70)" if c_index >= 0.7 else "Moderate")
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val" style="color: #0284c7;">{c_qual}</div><div class="kpi-label">Discrimination Power</div></div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    s = cph.summary
+    table_rows = []
+    for var_name, row in s.iterrows():
+        b_coef = row['coef']
+        hr_val = row['exp(coef)']
+        se_val = row['se(coef)']
+        ci_l = np.exp(row['coef lower 95%'])
+        ci_u = np.exp(row['coef upper 95%'])
+        z_v = row['z']
+        p_v = row['p']
+        sig_str = "✅ p < 0.05" if p_v < 0.05 else "⚪ n.s."
+
+        display_name = str(var_name).replace("Cohort_", "Cohort: ").replace("_", " ")
+        table_rows.append({
+            "Covariate": display_name,
+            "Coef (β)": round(b_coef, 4),
+            "Hazard Ratio (HR)": round(hr_val, 4),
+            "95% CI Lower": round(ci_l, 4),
+            "95% CI Upper": round(ci_u, 4),
+            "Std Error (SE)": round(se_val, 4),
+            "Wald z": round(z_v, 3),
+            "p-value": f"{p_v:.4g}",
+            "Significance": sig_str
+        })
+    res_df = pd.DataFrame(table_rows)
+    st.markdown("#### 📋 Cox Proportional Hazards Model Coefficients & Hazard Ratios")
+    st.dataframe(res_df, use_container_width=True)
+
+    st.markdown("#### 🌲 Hazard Ratio Forest Plot (95% CI)")
+    fig_fp, ax_fp = plt.subplots(figsize=(8.8, max(3.6, len(table_rows) * 0.75 + 1.2)), dpi=300)
+    ax_fp.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='x', zorder=1)
+
+    y_pos = np.arange(len(table_rows))[::-1]
+    hr_list = [r["Hazard Ratio (HR)"] for r in table_rows]
+    ci_l_list = [r["95% CI Lower"] for r in table_rows]
+    ci_u_list = [r["95% CI Upper"] for r in table_rows]
+    labels = [r["Covariate"] for r in table_rows]
+    p_vals = [float(r["p-value"]) for r in table_rows]
+
+    xerr_low = np.array(hr_list) - np.array(ci_l_list)
+    xerr_high = np.array(ci_u_list) - np.array(hr_list)
+
+    pt_colors = []
+    for hr_item, p_item in zip(hr_list, p_vals):
+        if p_item < 0.05:
+            pt_colors.append('#dc2626' if hr_item > 1.0 else '#16a34a')
+        else:
+            pt_colors.append('#64748b')
+
+    for i in range(len(y_pos)):
+        ax_fp.errorbar(
+            hr_list[i], y_pos[i],
+            xerr=[[xerr_low[i]], [xerr_high[i]]],
+            fmt='o', color=pt_colors[i], ecolor=pt_colors[i],
+            elinewidth=2.2, capsize=5, capthick=1.8, markersize=8.5, zorder=3
+        )
+        annot = f"HR = {hr_list[i]:.2f} [{ci_l_list[i]:.2f}, {ci_u_list[i]:.2f}] (p={p_vals[i]:.3g})"
+        ax_fp.text(ci_u_list[i] * 1.05 + 0.05, y_pos[i], annot, va='center', ha='left', fontsize=9.5, fontweight='bold', color=pt_colors[i])
+
+    ax_fp.axvline(1.0, color='#dc2626', linestyle='--', linewidth=1.5, label='Null Effect (HR = 1.0)', zorder=2)
+    ax_fp.set_yticks(y_pos)
+    ax_fp.set_yticklabels(labels, fontsize=11, fontweight='bold')
+    ax_fp.set_xlabel('Hazard Ratio (HR) with 95% Confidence Intervals', fontsize=12, fontweight='bold', labelpad=8)
+    ax_fp.spines['top'].set_visible(False)
+    ax_fp.spines['right'].set_visible(False)
+    ax_fp.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.9, fontsize=9.5)
+
+    max_ci = max(ci_u_list) if ci_u_list else 2.0
+    ax_fp.set_xlim(left=max(0.0, min(ci_l_list) * 0.8 - 0.2 if ci_l_list else 0.0), right=max_ci * 1.55 + 0.5)
+
+    fig_fp.tight_layout()
+    st.pyplot(fig_fp)
+
+    buf_fp = io.BytesIO()
+    fig_fp.savefig(buf_fp, format="png", dpi=300, bbox_inches='tight')
+
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button("📥 Download Forest Plot (PNG)", data=buf_fp.getvalue(), file_name="cox_forest_plot.png", mime="image/png")
+    with col_dl2:
+        st.download_button("📊 Download Cox Regression Summary (CSV)", data=res_df.to_csv(index=False), file_name="cox_regression_summary.csv", mime="text/csv")
+    plt.close(fig_fp)
+
+    st.markdown("#### 💡 Biological Hazard Interpretation")
+    for r in table_rows:
+        hr_item = r["Hazard Ratio (HR)"]
+        p_item = float(r["p-value"])
+        cov_name = r["Covariate"]
+        if p_item < 0.05:
+            if hr_item > 1.0:
+                pct_inc = (hr_item - 1.0) * 100.0
+                st.write(f"- **{cov_name}**: Associated with a **{pct_inc:.1f}% increase** in instantaneous mortality risk relative to baseline ($HR = {hr_item:.2f}, p = {p_item:.4g}$). Accelerates mortality.")
+            else:
+                pct_dec = (1.0 - hr_item) * 100.0
+                st.write(f"- **{cov_name}**: Associated with a **{pct_dec:.1f}% decrease** in instantaneous mortality risk relative to baseline ($HR = {hr_item:.2f}, p = {p_item:.4g}$). Conveys relative survival protection.")
+        else:
+            st.write(f"- **{cov_name}**: No statistically significant hazard effect detected ($HR = {hr_item:.2f}, p = {p_item:.4g}$).")
 
 
 DEFAULT_CSV = """Day,Date/time,Bee 1,Bee 2,Bee 3,Bee 4,Bee 5,Bee 6,Bee 7,Bee 8,Bee 9,Bee 10,Bee 11,Bee 12,Bee 13,Bee 14,Temp (°C),Humidity,Treatment,Observations/notes
@@ -556,7 +1033,7 @@ Day 6,07.09.2026-16:00,D,D,D,A,B,A,A,A,D,A,A,D,A,D,24.5,64,Sucrose solution,
 Day 7,08.09.2026-16:00,D,D,D,B,B,A,A,A,D,A,A,D,A,D,24.8,62,Sucrose solution,
 Day 8,09.09.2026-16:00,D,D,D,B,B,A,A,A,D,A,A,D,A,D,23.4,59,Sucrose solution,"""
 
-tab1, tab2 = st.tabs(["🐝 Single CSV Analysis", "📈 Multi-CSV Probit Comparison"])
+tab1, tab2, tab3 = st.tabs(["🐝 Single CSV Analysis", "📈 Multi-CSV Probit Comparison", "🔬 Survival Statistics (Log-Rank & Cox Regression)"])
 
 
 def render_single_batch_tab():
@@ -939,7 +1416,9 @@ def render_single_batch_tab():
         "Consumption Plot (Per Bee)",
         "Statistical Correlation Heatmap",
         "Abbott Corrected Mortality Curve",
-        "Probit Regression (Time-Mortality)"
+        "Probit Regression (Time-Mortality)",
+        "Log-Rank Survival Test (By Treatment)",
+        "Cox Proportional Hazards Regression"
     ]
     col_sel, col_zip = st.columns([3, 1])
     with col_sel:
@@ -1401,6 +1880,24 @@ def render_single_batch_tab():
         st.pyplot(fig_probit)
         get_image_download_link(fig_probit, 'fig_probit_regression.png', 'Download Probit Regression Curve')
 
+    if "Log-Rank Survival Test (By Treatment)" in selected_plots:
+        treatment_vals = [str(x).strip() for x in df['Treatment'].unique() if pd.notna(x) and str(x).strip() != ''] if 'Treatment' in df.columns else []
+        st.markdown("---")
+        st.subheader("Log-Rank Survival Test (By Treatment)")
+        if len(treatment_vals) >= 2:
+            single_bees_df = extract_individual_bee_survival(df, batch_name="Single Batch", elapsed_days=elapsed_days)
+            render_log_rank_analysis(single_bees_df, group_col='treatment')
+        else:
+            t_curr = treatment_vals[0] if treatment_vals else "None"
+            st.info(f"💡 **Log-Rank Survival Test**: The uploaded file contains only 1 treatment cohort ('{t_curr}'). Log-Rank test requires at least 2 distinct treatment cohorts to compare. Upload multiple CSV files in the **'Multi-CSV Probit Comparison'** or **'Survival Statistics'** tab.")
+
+    if "Cox Proportional Hazards Regression" in selected_plots:
+        st.markdown("---")
+        st.subheader("Cox Proportional Hazards Regression")
+        single_bees_df = extract_individual_bee_survival(df, batch_name="Single Batch", elapsed_days=elapsed_days)
+        treatment_vals = [str(x).strip() for x in df['Treatment'].unique() if pd.notna(x) and str(x).strip() != ''] if 'Treatment' in df.columns else []
+        render_cox_regression_analysis(single_bees_df, group_col='treatment' if len(treatment_vals) > 1 else 'cohort')
+
     if plot_images_dict:
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zip_file:
@@ -1563,9 +2060,15 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                 'name': bcfg['name'],
                 'color': bcfg['color'],
                 'marker': bcfg['marker'],
-                'linestyle': bcfg['linestyle']
+                'linestyle': bcfg['linestyle'],
+                'raw_df': bcfg['raw_df']
             })
+            if 'individual_bees' in p_res and isinstance(p_res['individual_bees'], pd.DataFrame):
+                p_res['individual_bees']['cohort'] = bcfg['name']
+                p_res['individual_bees']['color'] = bcfg['color']
             processed_batches.append(p_res)
+
+        st.session_state['processed_batches'] = processed_batches
 
         st.markdown("### 📊 Multi-CSV Key Summary")
         k1, k2, k3, k4 = st.columns(4)
@@ -1872,5 +2375,99 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                     for fn, data in multi_plot_images.items():
                         zf.writestr(fn, data)
                 st.download_button("📦 Download All Multi-CSV Plots (ZIP)", data=zip_multi_buf.getvalue(), file_name="multi_csv_plots.zip", mime="application/zip")
+
+        # 5. Log-Rank (Mantel-Cox) Survival Test Across Batches
+        st.markdown("---")
+        st.subheader("5. Log-Rank (Mantel-Cox) Survival Test Across CSV Files")
+        all_cohort_bees = []
+        c_map = {}
+        for b in processed_batches:
+            b_df = b.get('individual_bees')
+            if b_df is not None and not b_df.empty:
+                b_copy = b_df.copy()
+                b_copy['cohort'] = b['name']
+                all_cohort_bees.append(b_copy)
+                c_map[b['name']] = b['color']
+
+        if len(all_cohort_bees) >= 2:
+            multi_survival_df = pd.concat(all_cohort_bees, ignore_index=True)
+            render_log_rank_analysis(multi_survival_df, group_col='cohort', color_map=c_map)
+
+            # 6. Cox Proportional Hazards Regression Across Batches
+            st.markdown("---")
+            st.subheader("6. Cox Proportional Hazards Regression Across Batches")
+            render_cox_regression_analysis(multi_survival_df, group_col='cohort')
+        else:
+            st.info("Log-Rank and Cox Regression require at least 2 CSV files to compare.")
+
+
+with tab3:
+    st.header("🔬 Advanced Survival Statistics: Log-Rank Test & Cox Proportional Hazards")
+    st.markdown("Perform formal inferential survival statistics: evaluate whether survival distributions differ significantly between exposure groups using the **Log-Rank (Mantel-Cox) Test**, and quantify relative hazard ratios and covariate impacts via **Cox Proportional Hazards Regression**.")
+
+    stat_source = st.radio(
+        "Select Dataset Source for Survival Statistics:",
+        ["📂 Multi-CSV Comparison Cohorts", "📄 Single CSV Dataset"],
+        horizontal=True
+    )
+
+    if stat_source.startswith("📂 Multi-CSV"):
+        batches_avail = st.session_state.get('processed_batches', [])
+        if not batches_avail and 'processed_batches' in locals():
+            batches_avail = processed_batches
+
+        if batches_avail:
+            all_bees_list = []
+            c_map_tab3 = {}
+            for b in batches_avail:
+                b_df = b.get('individual_bees')
+                if b_df is not None and not b_df.empty:
+                    b_copy = b_df.copy()
+                    b_copy['cohort'] = b['name']
+                    all_bees_list.append(b_copy)
+                    c_map_tab3[b['name']] = b.get('color', '#0284c7')
+
+            if len(all_bees_list) >= 2:
+                combined_stat_df = pd.concat(all_bees_list, ignore_index=True)
+                all_cohs = list(c_map_tab3.keys())
+                sel_cohs = st.multiselect("Select Cohorts to Include in Statistical Comparison:", all_cohs, default=all_cohs, key="tab3_cohort_select")
+
+                if len(sel_cohs) >= 2:
+                    filtered_df = combined_stat_df[combined_stat_df['cohort'].isin(sel_cohs)].copy()
+
+                    st.markdown("---")
+                    st.subheader("1. Log-Rank (Mantel-Cox) Multi-Cohort Survival Test")
+                    render_log_rank_analysis(filtered_df, group_col='cohort', color_map=c_map_tab3)
+
+                    st.markdown("---")
+                    st.subheader("2. Cox Proportional Hazards Model (Cohort Hazard Ratios & Covariates)")
+                    render_cox_regression_analysis(filtered_df, group_col='cohort')
+                else:
+                    st.info("Please select at least 2 cohorts to compare.")
+            else:
+                st.info("At least 2 cohorts are required to perform survival comparisons. Please upload CSV files in the Multi-CSV tab.")
+        else:
+            st.info("No Multi-CSV cohorts found yet. Please view the '📈 Multi-CSV Probit Comparison' tab or upload your files to initialize.")
+    else:
+        s_df = st.session_state.get('df')
+        if s_df is not None:
+            single_bees_df = extract_individual_bee_survival(s_df, batch_name="Current Dataset")
+            st.markdown(f"**Loaded Dataset:** {len(single_bees_df)} individual bees observed over {len(s_df)} days.")
+
+            treatment_vals = [str(x).strip() for x in s_df['Treatment'].unique() if pd.notna(x) and str(x).strip() != ''] if 'Treatment' in s_df.columns else []
+
+            if len(treatment_vals) >= 2:
+                st.markdown("---")
+                st.subheader("1. Log-Rank (Mantel-Cox) Survival Test (By Treatment)")
+                render_log_rank_analysis(single_bees_df, group_col='treatment')
+            else:
+                st.info("💡 **Log-Rank Note**: The single CSV file contains only 1 treatment value. For multi-cohort comparison, upload multiple CSV files in Tab 2 or include distinct labels in the 'Treatment' column.")
+
+            st.markdown("---")
+            st.subheader("2. Cox Proportional Hazards Regression (Individual Bee Covariates)")
+            render_cox_regression_analysis(single_bees_df, group_col='treatment' if len(treatment_vals) > 1 else 'cohort')
+        else:
+            st.info("No single CSV data loaded yet. Please view the '🐝 Single CSV Analysis' tab.")
+
 
 
