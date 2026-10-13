@@ -170,12 +170,11 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
 
     with c_cfg2:
         cov_options = []
-        if 'mean_consumption' in survival_df.columns and survival_df['mean_consumption'].std() > 0:
-            cov_options.append("Mean Consumption (µL/day)")
-        if 'temp' in survival_df.columns and survival_df['temp'].std() > 0:
-            cov_options.append("Temperature (°C)")
-        if 'humidity' in survival_df.columns and survival_df['humidity'].std() > 0:
-            cov_options.append("Humidity (%)")
+        for col_key, col_label in [('mean_consumption', "Mean Consumption (µL/day)"), ('temp', "Temperature (°C)"), ('humidity', "Humidity (%)")]:
+            if col_key in survival_df.columns:
+                s_clean = pd.to_numeric(survival_df[col_key], errors='coerce').dropna()
+                if len(s_clean) > 1 and s_clean.nunique() > 1 and float(s_clean.std()) > 0.05:
+                    cov_options.append(col_label)
 
         selected_covs = st.multiselect("Additional Covariates to Include:", cov_options, default=cov_options, key=f"cox_covs_{group_col}")
 
@@ -186,22 +185,32 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
         ref_col = f"Cohort_{ref_selected}"
         if ref_col in dummies.columns:
             dummies = dummies.drop(columns=[ref_col])
-        cph_df = pd.concat([cph_df, dummies], axis=1)
+        valid_dummies = [c for c in dummies.columns if dummies[c].nunique() > 1 and dummies[c].std() > 0.01]
+        if valid_dummies:
+            cph_df = pd.concat([cph_df, dummies[valid_dummies]], axis=1)
 
     if "Mean Consumption (µL/day)" in selected_covs and 'mean_consumption' in survival_df.columns:
-        cph_df['Mean_Consumption_uL'] = survival_df['mean_consumption'].astype(float)
+        s_c = pd.to_numeric(survival_df['mean_consumption'], errors='coerce').fillna(0.0)
+        if s_c.nunique() > 1 and s_c.std() > 0.05:
+            cph_df['Mean_Consumption_uL'] = s_c.astype(float)
+
     if "Temperature (°C)" in selected_covs and 'temp' in survival_df.columns:
-        cph_df['Temp_C'] = survival_df['temp'].astype(float)
+        s_t = pd.to_numeric(survival_df['temp'], errors='coerce').fillna(25.0)
+        if s_t.nunique() > 1 and s_t.std() > 0.05:
+            cph_df['Temp_C'] = s_t.astype(float)
+
     if "Humidity (%)" in selected_covs and 'humidity' in survival_df.columns:
-        cph_df['Humidity_pct'] = survival_df['humidity'].astype(float)
+        s_h = pd.to_numeric(survival_df['humidity'], errors='coerce').fillna(60.0)
+        if s_h.nunique() > 1 and s_h.std() > 0.05:
+            cph_df['Humidity_pct'] = s_h.astype(float)
 
     covariate_cols = [c for c in cph_df.columns if c not in ['duration', 'event']]
     if not covariate_cols:
-        st.info("💡 Please include at least one covariate or ensure multiple cohorts exist to fit the Cox Model.")
+        st.info("💡 **Cox Proportional Hazards Model**: Requires at least 2 distinct cohorts (or individual covariates with variance such as feeding consumption) to quantify hazard ratios. Please select additional cohorts or covariates above.")
         return
 
     try:
-        cph = CoxPHFitter(penalizer=0.05)
+        cph = CoxPHFitter(penalizer=0.1)
         cph.fit(cph_df, duration_col='duration', event_col='event')
     except Exception as ex:
         st.error(f"Error fitting Cox Proportional Hazards Model: {ex}")
@@ -228,13 +237,29 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
     s = cph.summary
     table_rows = []
     for var_name, row in s.iterrows():
-        b_coef = row['coef']
-        hr_val = row['exp(coef)']
-        se_val = row['se(coef)']
-        ci_l = np.exp(row['coef lower 95%'])
-        ci_u = np.exp(row['coef upper 95%'])
-        z_v = row['z']
-        p_v = row['p']
+        b_coef = float(row['coef'])
+        raw_hr = float(row['exp(coef)'])
+        se_val = float(row['se(coef)']) if pd.notna(row['se(coef)']) else 0.0
+
+        raw_ci_l = float(row['coef lower 95%']) if 'coef lower 95%' in row and pd.notna(row['coef lower 95%']) else (b_coef - 1.96 * se_val)
+        raw_ci_u = float(row['coef upper 95%']) if 'coef upper 95%' in row and pd.notna(row['coef upper 95%']) else (b_coef + 1.96 * se_val)
+
+        # Clip exponent arguments between -25 and 25 to prevent float overflow
+        ci_l = float(np.exp(np.clip(raw_ci_l, -25.0, 25.0)))
+        ci_u = float(np.exp(np.clip(raw_ci_u, -25.0, 25.0)))
+        hr_val = float(np.exp(np.clip(b_coef, -25.0, 25.0)))
+
+        if not np.isfinite(hr_val) or hr_val <= 0:
+            hr_val = 1.0
+        if not np.isfinite(ci_l) or ci_l <= 0:
+            ci_l = 0.01
+        if not np.isfinite(ci_u) or ci_u <= 0:
+            ci_u = max(ci_l * 1.5, hr_val * 2.0, 2.0)
+        if ci_u < ci_l:
+            ci_u = ci_l * 1.5
+
+        z_v = float(row['z']) if pd.notna(row['z']) else 0.0
+        p_v = float(row['p']) if pd.notna(row['p']) else 1.0
         sig_str = "✅ p < 0.05" if p_v < 0.05 else "⚪ n.s."
 
         display_name = str(var_name).replace("Cohort_", "Cohort: ").replace("_", " ")
@@ -258,14 +283,29 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
     ax_fp.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='x', zorder=1)
 
     y_pos = np.arange(len(table_rows))[::-1]
-    hr_list = [r["Hazard Ratio (HR)"] for r in table_rows]
-    ci_l_list = [r["95% CI Lower"] for r in table_rows]
-    ci_u_list = [r["95% CI Upper"] for r in table_rows]
     labels = [r["Covariate"] for r in table_rows]
     p_vals = [float(r["p-value"]) for r in table_rows]
 
-    xerr_low = np.array(hr_list) - np.array(ci_l_list)
-    xerr_high = np.array(ci_u_list) - np.array(hr_list)
+    # Ensure all values in Forest Plot are strictly positive, finite, and well-behaved
+    hr_list = []
+    ci_l_list = []
+    ci_u_list = []
+    xerr_low = []
+    xerr_high = []
+
+    for r in table_rows:
+        hr_clean = float(np.clip(r["Hazard Ratio (HR)"], 0.01, 50.0))
+        ci_l_clean = float(np.clip(r["95% CI Lower"], 0.005, hr_clean))
+        ci_u_clean = float(np.clip(r["95% CI Upper"], hr_clean, 60.0))
+
+        err_l = max(0.001, hr_clean - ci_l_clean)
+        err_u = max(0.001, ci_u_clean - hr_clean)
+
+        hr_list.append(hr_clean)
+        ci_l_list.append(ci_l_clean)
+        ci_u_list.append(ci_u_clean)
+        xerr_low.append(err_l)
+        xerr_high.append(err_u)
 
     pt_colors = []
     for hr_item, p_item in zip(hr_list, p_vals):
@@ -282,7 +322,7 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
             elinewidth=2.2, capsize=5, capthick=1.8, markersize=8.5, zorder=3
         )
         annot = f"HR = {hr_list[i]:.2f} [{ci_l_list[i]:.2f}, {ci_u_list[i]:.2f}] (p={p_vals[i]:.3g})"
-        ax_fp.text(ci_u_list[i] * 1.05 + 0.05, y_pos[i], annot, va='center', ha='left', fontsize=9.5, fontweight='bold', color=pt_colors[i])
+        ax_fp.text(ci_u_list[i] * 1.04 + 0.05, y_pos[i], annot, va='center', ha='left', fontsize=9.5, fontweight='bold', color=pt_colors[i])
 
     ax_fp.axvline(1.0, color='#dc2626', linestyle='--', linewidth=1.5, label='Null Effect (HR = 1.0)', zorder=2)
     ax_fp.set_yticks(y_pos)
@@ -293,7 +333,18 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
     ax_fp.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.9, fontsize=9.5)
 
     max_ci = max(ci_u_list) if ci_u_list else 2.0
-    ax_fp.set_xlim(left=max(0.0, min(ci_l_list) * 0.8 - 0.2 if ci_l_list else 0.0), right=max_ci * 1.55 + 0.5)
+    min_ci = min(ci_l_list) if ci_l_list else 0.5
+
+    left_bound = max(0.0, min_ci * 0.8 - 0.2)
+    right_bound = min(max_ci * 1.45 + 0.5, 75.0)
+
+    # Bulletproof check: Ensure bounds are strictly finite numbers
+    if not np.isfinite(left_bound) or left_bound < 0:
+        left_bound = 0.0
+    if not np.isfinite(right_bound) or right_bound <= left_bound:
+        right_bound = max(left_bound + 2.0, 4.0)
+
+    ax_fp.set_xlim(left=left_bound, right=right_bound)
 
     fig_fp.tight_layout()
     st.pyplot(fig_fp)

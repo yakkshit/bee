@@ -930,7 +930,13 @@ def render_single_batch_tab(settings=None):
         st.markdown("---")
         st.subheader("Cox Proportional Hazards Regression")
         single_bees_df = extract_individual_bee_survival(df, batch_name="Single Batch", elapsed_days=elapsed_days)
-        render_cox_regression_analysis(single_bees_df, group_col='treatment' if len(treatment_vals) > 1 else 'cohort')
+        treatment_vals = [str(x).strip() for x in df['Treatment'].unique() if pd.notna(x) and str(x).strip() != ''] if 'Treatment' in df.columns else []
+        has_varying_cons = ('mean_consumption' in single_bees_df.columns and single_bees_df['mean_consumption'].nunique() > 1 and float(single_bees_df['mean_consumption'].std()) > 0.05)
+        if len(treatment_vals) >= 2 or has_varying_cons:
+            render_cox_regression_analysis(single_bees_df, group_col='treatment' if len(treatment_vals) > 1 else 'cohort')
+        else:
+            t_curr = treatment_vals[0] if treatment_vals else "None"
+            st.info(f"💡 **Cox Proportional Hazards Regression**: The uploaded file contains only 1 treatment cohort ('{t_curr}') and no varying individual bee feeding records. Cox regression evaluates relative hazard ratios between 2 or more exposure cohorts or across varying individual predictors. Please compare multiple cohorts in the **'Multi-CSV Probit Comparison'** or **'Survival Statistics'** tab.")
 
     # ==========================================
     # TAB 6: PUBLICATION MULTI-PANEL FIGURE
