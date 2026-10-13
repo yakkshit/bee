@@ -3,12 +3,14 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from itertools import combinations
 from lifelines import KaplanMeierFitter, CoxPHFitter
 from lifelines.statistics import logrank_test, multivariate_logrank_test
 
 
-def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None):
+def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, key_suffix: str = ""):
     """
     Renders Log-Rank (Mantel-Cox) Survival Test across cohorts/treatments.
     Computes chi2, p-value, df, pairwise comparisons with Bonferroni correction,
@@ -111,7 +113,8 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None):
 
     buf_km = io.BytesIO()
     fig_km.savefig(buf_km, format="png", dpi=300, bbox_inches='tight')
-    st.download_button("📥 Download Kaplan-Meier Multi-Cohort Plot (PNG)", data=buf_km.getvalue(), file_name="logrank_kaplan_meier_comparison.png", mime="image/png")
+    dl_km_key = f"dl_km_plot_{group_col}_{key_suffix}" if key_suffix else f"dl_km_plot_{group_col}"
+    st.download_button("📥 Download Kaplan-Meier Multi-Cohort Plot (PNG)", data=buf_km.getvalue(), file_name="logrank_kaplan_meier_comparison.png", mime="image/png", key=dl_km_key)
     plt.close(fig_km)
 
     st.markdown("#### 👥 Cohort Survival Breakdown")
@@ -149,7 +152,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None):
         st.info(f"**No Statistically Significant Difference:** The survival distributions do not differ significantly at the $\\alpha = 0.05$ level (Mantel-Cox Log-Rank $\\chi^2 = {chisq:.3f}, df = {df_val}, p = {p_str}$).")
 
 
-def render_cox_regression_analysis(survival_df, group_col='cohort', reference_group=None):
+def render_cox_regression_analysis(survival_df, group_col='cohort', reference_group=None, key_suffix: str = ""):
     """
     Fits Cox Proportional Hazards Model, computes Hazard Ratios, C-index,
     and generates a Forest Plot with error whiskers.
@@ -164,7 +167,8 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
     c_cfg1, c_cfg2 = st.columns([1, 2])
     with c_cfg1:
         if len(groups) > 1:
-            ref_selected = st.selectbox("Baseline Reference Cohort (HR = 1.0)", groups, index=0, key=f"cox_ref_{group_col}")
+            ref_k = f"cox_ref_{group_col}_{key_suffix}" if key_suffix else f"cox_ref_{group_col}"
+            ref_selected = st.selectbox("Baseline Reference Cohort (HR = 1.0)", groups, index=0, key=ref_k)
         else:
             ref_selected = groups[0] if groups else None
 
@@ -176,7 +180,8 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
                 if len(s_clean) > 1 and s_clean.nunique() > 1 and float(s_clean.std()) > 0.05:
                     cov_options.append(col_label)
 
-        selected_covs = st.multiselect("Additional Covariates to Include:", cov_options, default=cov_options, key=f"cox_covs_{group_col}")
+        cov_k = f"cox_covs_{group_col}_{key_suffix}" if key_suffix else f"cox_covs_{group_col}"
+        selected_covs = st.multiselect("Additional Covariates to Include:", cov_options, default=cov_options, key=cov_k)
 
     cph_df = survival_df[['duration', 'event']].copy()
 
@@ -263,12 +268,15 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
         sig_str = "✅ p < 0.05" if p_v < 0.05 else "⚪ n.s."
 
         display_name = str(var_name).replace("Cohort_", "Cohort: ").replace("_", " ")
+        ci_margin = round((ci_u - ci_l) / 2.0, 3)
         table_rows.append({
             "Covariate": display_name,
             "Coef (β)": round(b_coef, 4),
             "Hazard Ratio (HR)": round(hr_val, 4),
             "95% CI Lower": round(ci_l, 4),
             "95% CI Upper": round(ci_u, 4),
+            "95% CI Uncertainty": f"[{ci_l:.2f} – {ci_u:.2f}]",
+            "CI Margin (±)": ci_margin,
             "Std Error (SE)": round(se_val, 4),
             "Wald z": round(z_v, 3),
             "p-value": f"{p_v:.4g}",
@@ -278,7 +286,7 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
     st.markdown("#### 📋 Cox Proportional Hazards Model Coefficients & Hazard Ratios")
     st.dataframe(res_df, use_container_width=True)
 
-    st.markdown("#### 🌲 Hazard Ratio Forest Plot (95% CI)")
+    st.markdown("#### 🌲 Hazard Ratio Forest Plot (95% CI Uncertainty)")
     fig_fp, ax_fp = plt.subplots(figsize=(8.8, max(3.6, len(table_rows) * 0.75 + 1.2)), dpi=300)
     ax_fp.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='x', zorder=1)
 
@@ -307,6 +315,9 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
         xerr_low.append(err_l)
         xerr_high.append(err_u)
 
+    max_ci = max(ci_u_list) if ci_u_list else 2.0
+    min_ci = min(ci_l_list) if ci_l_list else 0.5
+
     pt_colors = []
     for hr_item, p_item in zip(hr_list, p_vals):
         if p_item < 0.05:
@@ -315,28 +326,45 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
             pt_colors.append('#64748b')
 
     for i in range(len(y_pos)):
+        # 1. Bold shaded CI ribbon
+        ax_fp.plot([ci_l_list[i], ci_u_list[i]], [y_pos[i], y_pos[i]], color=pt_colors[i], linewidth=5.5, alpha=0.35, zorder=2)
+
+        # 2. Prominent Errorbar with square marker and heavy end caps
         ax_fp.errorbar(
             hr_list[i], y_pos[i],
             xerr=[[xerr_low[i]], [xerr_high[i]]],
-            fmt='o', color=pt_colors[i], ecolor=pt_colors[i],
-            elinewidth=2.2, capsize=5, capthick=1.8, markersize=8.5, zorder=3
+            fmt='s', color=pt_colors[i], ecolor=pt_colors[i],
+            elinewidth=2.8, capsize=8.0, capthick=2.5, markersize=9.0, zorder=4
         )
-        annot = f"HR = {hr_list[i]:.2f} [{ci_l_list[i]:.2f}, {ci_u_list[i]:.2f}] (p={p_vals[i]:.3g})"
-        ax_fp.text(ci_u_list[i] * 1.04 + 0.05, y_pos[i], annot, va='center', ha='left', fontsize=9.5, fontweight='bold', color=pt_colors[i])
 
-    ax_fp.axvline(1.0, color='#dc2626', linestyle='--', linewidth=1.5, label='Null Effect (HR = 1.0)', zorder=2)
+        # 3. Formatted Badge with clear background box
+        annot = f"HR = {hr_list[i]:.2f}  [95% CI: {ci_l_list[i]:.2f} – {ci_u_list[i]:.2f}]  (p = {p_vals[i]:.3g})"
+        ax_fp.text(
+            ci_u_list[i] + (0.06 * (max_ci - min_ci + 1.0)), y_pos[i], annot,
+            va='center', ha='left', fontsize=9.5, fontweight='bold', color='#0f172a',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='#f8fafc', edgecolor='#cbd5e1', alpha=0.95, lw=1.2)
+        )
+
+    # Reference neutral zone & null line
+    ax_fp.axvline(1.0, color='#dc2626', linestyle='--', linewidth=1.6, zorder=3)
+    ax_fp.axvspan(0.9, 1.1, color='#f1f5f9', alpha=0.75, zorder=1)
     ax_fp.set_yticks(y_pos)
     ax_fp.set_yticklabels(labels, fontsize=11, fontweight='bold')
-    ax_fp.set_xlabel('Hazard Ratio (HR) with 95% Confidence Intervals', fontsize=12, fontweight='bold', labelpad=8)
+    ax_fp.set_xlabel('Hazard Ratio (HR) with 95% Confidence Intervals', fontsize=12, fontweight='bold', labelpad=12)
     ax_fp.spines['top'].set_visible(False)
     ax_fp.spines['right'].set_visible(False)
-    ax_fp.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.9, fontsize=9.5)
 
-    max_ci = max(ci_u_list) if ci_u_list else 2.0
-    min_ci = min(ci_l_list) if ci_l_list else 0.5
+    # Explicit Clinical Forest Plot Legend
+    legend_elements = [
+        Line2D([0], [0], marker='s', color='w', markerfacecolor='#2563eb', markeredgecolor='black', markersize=9, label='Hazard Ratio (HR) Point Estimate'),
+        Line2D([0], [0], color='#2563eb', lw=3, label='95% Confidence Interval (CI) Whisker'),
+        Line2D([0], [0], color='#dc2626', linestyle='--', lw=1.6, label='Null Line (HR = 1.0)'),
+        Patch(facecolor='#f1f5f9', edgecolor='#cbd5e1', label='Neutral Zone (HR 0.9 – 1.1)')
+    ]
+    ax_fp.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=True, facecolor='white', framealpha=0.95, fontsize=8.8)
 
-    left_bound = max(0.0, min_ci * 0.8 - 0.2)
-    right_bound = min(max_ci * 1.45 + 0.5, 75.0)
+    left_bound = max(0.0, min_ci * 0.7 - 0.2)
+    right_bound = max(max_ci * 1.65 + 1.2, 3.5)
 
     # Bulletproof check: Ensure bounds are strictly finite numbers
     if not np.isfinite(left_bound) or left_bound < 0:
@@ -345,6 +373,11 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
         right_bound = max(left_bound + 2.0, 4.0)
 
     ax_fp.set_xlim(left=left_bound, right=right_bound)
+    ax_fp.set_ylim(bottom=min(y_pos) - 0.9, top=max(y_pos) + 0.8)
+
+    # Directional Guidance at bottom relative to HR = 1.0 null line
+    ax_fp.text(0.85, min(y_pos) - 0.7, "◀ Favors Longer Survival (Protective)", fontsize=9.0, fontweight='bold', color='#16a34a', ha='right')
+    ax_fp.text(1.15, min(y_pos) - 0.7, "Accelerates Mortality (Higher Risk) ▶", fontsize=9.0, fontweight='bold', color='#dc2626', ha='left')
 
     fig_fp.tight_layout()
     st.pyplot(fig_fp)
@@ -354,22 +387,106 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
 
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
-        st.download_button("📥 Download Forest Plot (PNG)", data=buf_fp.getvalue(), file_name="cox_forest_plot.png", mime="image/png")
+        fp_k = f"dl_cox_forest_{group_col}_{key_suffix}" if key_suffix else f"dl_cox_forest_{group_col}"
+        st.download_button("📥 Download Forest Plot (PNG)", data=buf_fp.getvalue(), file_name="cox_forest_plot.png", mime="image/png", key=fp_k)
     with col_dl2:
-        st.download_button("📊 Download Cox Regression Summary (CSV)", data=res_df.to_csv(index=False), file_name="cox_regression_summary.csv", mime="text/csv")
+        sum_k = f"dl_cox_summary_{group_col}_{key_suffix}" if key_suffix else f"dl_cox_summary_{group_col}"
+        st.download_button("📊 Download Cox Regression Summary (CSV)", data=res_df.to_csv(index=False), file_name="cox_regression_summary.csv", mime="text/csv", key=sum_k)
     plt.close(fig_fp)
 
-    st.markdown("#### 💡 Biological Hazard Interpretation")
+    st.markdown("#### 💡 Biological Hazard & Uncertainty Interpretation")
     for r in table_rows:
         hr_item = r["Hazard Ratio (HR)"]
+        ci_str = r["95% CI Uncertainty"]
         p_item = float(r["p-value"])
         cov_name = r["Covariate"]
         if p_item < 0.05:
             if hr_item > 1.0:
                 pct_inc = (hr_item - 1.0) * 100.0
-                st.write(f"- **{cov_name}**: Associated with a **{pct_inc:.1f}% increase** in instantaneous mortality risk relative to baseline ($HR = {hr_item:.2f}, p = {p_item:.4g}$). Accelerates mortality.")
+                st.write(f"- **{cov_name}**: Associated with a **{pct_inc:.1f}% increase** in instantaneous mortality risk ($HR = {hr_item:.2f}$, 95% CI: `{ci_str}`, $p = {p_item:.4g}$). Accelerates mortality with statistical significance.")
             else:
                 pct_dec = (1.0 - hr_item) * 100.0
-                st.write(f"- **{cov_name}**: Associated with a **{pct_dec:.1f}% decrease** in instantaneous mortality risk relative to baseline ($HR = {hr_item:.2f}, p = {p_item:.4g}$). Conveys relative survival protection.")
+                st.write(f"- **{cov_name}**: Associated with a **{pct_dec:.1f}% decrease** in instantaneous mortality risk ($HR = {hr_item:.2f}$, 95% CI: `{ci_str}`, $p = {p_item:.4g}$). Conveys relative survival protection.")
         else:
-            st.write(f"- **{cov_name}**: No statistically significant hazard effect detected ($HR = {hr_item:.2f}, p = {p_item:.4g}$).")
+            st.write(f"- **{cov_name}**: No statistically significant hazard effect detected ($HR = {hr_item:.2f}$, 95% CI: `{ci_str}`, $p = {p_item:.4g}$). The confidence interval crosses 1.0, reflecting uncertainty consistent with null effect.")
+
+
+def render_logrank_math_card():
+    """Renders the mathematical methodology explanation card for the Log-Rank test."""
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, rgba(248,250,252,0.95), rgba(241,245,249,0.95)); border: 1px solid #cbd5e1; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+        <h4 style="margin-top: 0; color: #0f172a; display: flex; align-items: center; gap: 8px;">
+            📐 Log-Rank Mathematical Framework
+        </h4>
+        <p style="font-size: 0.9rem; color: #475569; margin-bottom: 12px;">
+            The <b>Mantel-Cox Log-Rank Test</b> is a non-parametric rank test comparing the survival distributions of two or more independent cohorts across the entire observation period under right-censored conditions.
+        </p>
+        <div style="background: white; border-radius: 8px; padding: 12px; border-left: 4px solid #0284c7; margin-bottom: 14px;">
+            <b style="color: #0369a1;">Mantel-Cox Test Statistic:</b>
+            <div style="margin: 8px 0; font-size: 0.95rem;">
+                $$\\chi^2 = \\frac{\\left(\\sum_{j=1}^K (O_{1j} - E_{1j})\\right)^2}{\\sum_{j=1}^K V_{1j}}$$
+            </div>
+            <span style="font-size: 0.82rem; color: #64748b;">
+                Where $O_{1j}$ is observed deaths in group 1 at time $t_j$, $E_{1j} = d_j \\frac{n_{1j}}{n_j}$ is expected deaths under null hypothesis $H_0$, and $V_{1j} = \\frac{n_{1j} n_{2j} d_j (n_j - d_j)}{n_j^2 (n_j - 1)}$ is hypergeometric variance.
+            </span>
+        </div>
+        <div style="background: white; border-radius: 8px; padding: 12px; border-left: 4px solid #10b981; margin-bottom: 14px;">
+            <b style="color: #047857;">Kaplan-Meier Product-Limit Estimator:</b>
+            <div style="margin: 8px 0; font-size: 0.95rem;">
+                $$\\hat{S}(t) = \\prod_{t_i \\le t} \\left(1 - \\frac{d_i}{n_i}\\right)$$
+            </div>
+            <span style="font-size: 0.82rem; color: #64748b;">
+                Greenwood's 95% Confidence Band (Survival Uncertainty Ribbon):
+                $$\\widehat{\\text{Var}}(\\hat{S}(t)) = \\hat{S}(t)^2 \\sum_{t_i \\le t} \\frac{d_i}{n_i (n_i - d_i)}$$
+            </span>
+        </div>
+        <div style="font-size: 0.85rem; color: #475569;">
+            <b>Assumptions:</b>
+            <ul style="padding-left: 18px; margin: 6px 0 0 0;">
+                <li>Censoring is non-informative (independent of event risk).</li>
+                <li>Probabilities of survival are identical for subjects recruited early vs late.</li>
+                <li>Events occur independently across individuals.</li>
+            </ul>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_cox_math_card():
+    """Renders the mathematical methodology explanation card for Cox Proportional Hazards."""
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, rgba(248,250,252,0.95), rgba(241,245,249,0.95)); border: 1px solid #cbd5e1; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+        <h4 style="margin-top: 0; color: #0f172a; display: flex; align-items: center; gap: 8px;">
+            📐 Cox Proportional Hazards Math & Uncertainty
+        </h4>
+        <p style="font-size: 0.9rem; color: #475569; margin-bottom: 12px;">
+            The <b>Cox Proportional Hazards Model</b> is a semi-parametric regression model that links multiple explanatory covariates directly to the instantaneous rate of mortality (hazard function).
+        </p>
+        <div style="background: white; border-radius: 8px; padding: 12px; border-left: 4px solid #ef4444; margin-bottom: 14px;">
+            <b style="color: #b91c1c;">Hazard Function Formulation:</b>
+            <div style="margin: 8px 0; font-size: 0.95rem;">
+                $$h(t \\mid X) = h_0(t) \\exp\\left(\\sum_{j=1}^p \\beta_j X_j\\right)$$
+            </div>
+            <span style="font-size: 0.82rem; color: #64748b;">
+                Where $h_0(t)$ is the non-parametric baseline hazard over elapsed days, and $\\beta_j$ is the partial maximum likelihood regression coefficient.
+            </span>
+        </div>
+        <div style="background: white; border-radius: 8px; padding: 12px; border-left: 4px solid #8b5cf6; margin-bottom: 14px;">
+            <b style="color: #6d28d9;">Hazard Ratio (HR) & 95% Confidence Intervals:</b>
+            <div style="margin: 8px 0; font-size: 0.95rem;">
+                $$\\text{HR}_j = \\exp(\\beta_j), \\quad 95\\% \\text{ CI} = \\left[\\exp(\\beta_j - 1.96 \\cdot \\text{SE}), \\; \\exp(\\beta_j + 1.96 \\cdot \\text{SE})\\right]$$
+            </div>
+            <span style="font-size: 0.82rem; color: #64748b;">
+                The 95% Confidence Interval quantifies <b>parameter estimation uncertainty</b>. If the interval excludes 1.0, the covariate significantly modifies survival rate ($p < 0.05$).
+            </span>
+        </div>
+        <div style="font-size: 0.85rem; color: #475569;">
+            <b>Discrimination & Quality Metrics:</b>
+            <ul style="padding-left: 18px; margin: 6px 0 0 0;">
+                <li><b>C-Index (Harrell's C):</b> Concordance probability ($0.5 = \\text{chance}$, $1.0 = \\text{perfect ranking}$).</li>
+                <li><b>Partial AIC:</b> Akaike Information Criterion assessing goodness-of-fit with parsimony penalty.</li>
+                <li><b>Proportionality:</b> Assumes hazard ratios between groups remain constant over time.</li>
+            </ul>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)

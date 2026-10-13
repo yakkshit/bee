@@ -293,6 +293,7 @@ def parse_batch_df(raw_df, abbott_c=0.0):
         'r_val': r_val,
         'lt10': lt_map.get('LT10', np.nan),
         'lt20': lt_map.get('LT20', np.nan),
+        'lt30': lt_map.get('LT30', np.nan),
         'lt50': lt50_elapsed,
         'lt90': lt90_elapsed,
         'lt_records': default_lt_records,
@@ -325,9 +326,13 @@ def calculate_lt_percentiles(intercept_a, slope_b, start_time=1.0, times_numeric
         # Theoretical Probit OLS estimate
         if slope_b > 0:
             theo_lt = float(10.0 ** ((probit_score - intercept_a) / slope_b))
-            if np.isfinite(theo_lt) and theo_lt >= start_time:
-                theo_elapsed = max(0.0, theo_lt - start_time)
-                theo_elapsed_int = int(np.ceil(theo_elapsed))
+            if np.isfinite(theo_lt) and theo_lt > 0:
+                if theo_lt <= start_time:
+                    theo_elapsed = max(0.1, theo_lt)
+                    theo_elapsed_int = 1
+                else:
+                    theo_elapsed = theo_lt - start_time
+                    theo_elapsed_int = max(1, int(np.ceil(theo_elapsed)))
             else:
                 theo_lt = np.nan
                 theo_elapsed = np.nan
@@ -348,9 +353,13 @@ def calculate_lt_percentiles(intercept_a, slope_b, start_time=1.0, times_numeric
             m_arr = np.array(mortality_pct, dtype=float)
 
             if m_arr[0] >= p:
-                emp_lt = float(t_arr[0])
-                emp_elapsed = max(0.0, emp_lt - start_time)
-                emp_elapsed_int = int(np.ceil(emp_elapsed))
+                t_first = float(t_arr[0])
+                if m_arr[0] > 0:
+                    emp_lt = max(0.1, (p / m_arr[0]) * t_first)
+                else:
+                    emp_lt = t_first
+                emp_elapsed = max(0.1, emp_lt - max(0.0, start_time - 1.0))
+                emp_elapsed_int = 1
                 reached = True
             else:
                 for idx in range(1, len(m_arr)):
@@ -365,8 +374,8 @@ def calculate_lt_percentiles(intercept_a, slope_b, start_time=1.0, times_numeric
                         else:
                             emp_lt = t_curr
 
-                        emp_elapsed = max(0.0, emp_lt - start_time)
-                        emp_elapsed_int = int(np.ceil(emp_elapsed))
+                        emp_elapsed = max(0.1, emp_lt - start_time)
+                        emp_elapsed_int = max(1, int(np.ceil(emp_elapsed)))
                         reached = True
                         break
 

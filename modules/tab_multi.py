@@ -8,7 +8,12 @@ from matplotlib.ticker import MultipleLocator, MaxNLocator
 from matplotlib.lines import Line2D
 
 from modules.parser import parse_batch_df, calculate_lt_percentiles
-from modules.survival_stats import render_log_rank_analysis, render_cox_regression_analysis
+from modules.survival_stats import (
+    render_log_rank_analysis,
+    render_cox_regression_analysis,
+    render_logrank_math_card,
+    render_cox_math_card
+)
 
 
 def render_multi_batch_tab(settings=None):
@@ -475,13 +480,15 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         for idx_b, b in enumerate(processed_batches):
             lt10_val = b.get('lt10', np.nan)
             lt20_val = b.get('lt20', np.nan)
+            lt30_val = b.get('lt30', np.nan)
             lt50_val = b.get('lt50', np.nan)
             lt90_val = b.get('lt90', np.nan)
 
-            lt10_str = f"{int(round(lt10_val))}" if (np.isfinite(lt10_val) and lt10_val > 0) else "N/A"
-            lt20_str = f"{int(round(lt20_val))}" if (np.isfinite(lt20_val) and lt20_val > 0) else "N/A"
-            lt50_str = f"{int(round(lt50_val))}" if (np.isfinite(lt50_val) and lt50_val > 0) else "N/A"
-            lt90_str = f"{int(round(lt90_val))}" if (np.isfinite(lt90_val) and lt90_val > 0) else "N/A"
+            lt10_str = f"{int(round(lt10_val))}d" if (np.isfinite(lt10_val) and lt10_val > 0) else "N/A"
+            lt20_str = f"{int(round(lt20_val))}d" if (np.isfinite(lt20_val) and lt20_val > 0) else "N/A"
+            lt30_str = f"{int(round(lt30_val))}d" if (np.isfinite(lt30_val) and lt30_val > 0) else "N/A"
+            lt50_str = f"{int(round(lt50_val))}d" if (np.isfinite(lt50_val) and lt50_val > 0) else "N/A"
+            lt90_str = f"{int(round(lt90_val))}d" if (np.isfinite(lt90_val) and lt90_val > 0) else "N/A"
 
             row_data = {
                 "CSV File Name": b['name'],
@@ -491,15 +498,16 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                 "Slope (b)": round(b['slope_b'], 4),
                 "Intercept (a)": round(b['intercept_a'], 4),
                 "R² Score": round(b['r_squared'], 4),
-                "LT10 (Days)": lt10_str,
-                "LT20 (Days)": lt20_str,
-                "LT50 (Days)": lt50_str,
-                "LT90 (Days)": lt90_str,
+                "LT10": lt10_str,
+                "LT20": lt20_str,
+                "LT30": lt30_str,
+                "LT50": lt50_str,
+                "LT90": lt90_str,
             }
 
-            if active_metric_label not in ["LT10", "LT20", "LT50", "LT90"]:
+            if active_metric_label not in ["LT10", "LT20", "LT30", "LT50", "LT90"]:
                 cur_chosen_val = b_chosen_lt_vals[idx_b]
-                row_data[f"{active_metric_label} (Days)"] = f"{int(round(cur_chosen_val))}" if (np.isfinite(cur_chosen_val) and cur_chosen_val > 0) else "N/A"
+                row_data[f"{active_metric_label}"] = f"{int(round(cur_chosen_val))}d" if (np.isfinite(cur_chosen_val) and cur_chosen_val > 0) else "N/A"
 
             row_data["Final Mortality (%)"] = f"{b['mortality_pct'][-1]:.1f}%" if len(b['mortality_pct']) > 0 else "N/A"
             summary_rows.append(row_data)
@@ -535,11 +543,24 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
 
         if len(all_cohort_bees) >= 2:
             multi_survival_df = pd.concat(all_cohort_bees, ignore_index=True)
-            render_log_rank_analysis(multi_survival_df, group_col='cohort', color_map=c_map)
 
-            # 6. Cox Proportional Hazards Regression Across Batches
-            st.markdown("---")
-            st.subheader("6. Cox Proportional Hazards Regression Across Batches")
-            render_cox_regression_analysis(multi_survival_df, group_col='cohort')
+            subtab_multi_lr, subtab_multi_cox = st.tabs([
+                "📉 Multi-Cohort Log-Rank (Mantel-Cox) Test",
+                "🌲 Multi-Cohort Cox Proportional Hazards Regression"
+            ])
+
+            with subtab_multi_lr:
+                c_mlr_m, c_mlr_s = st.columns([2.2, 1.0])
+                with c_mlr_m:
+                    render_log_rank_analysis(multi_survival_df, group_col='cohort', color_map=c_map, key_suffix="multi")
+                with c_mlr_s:
+                    render_logrank_math_card()
+
+            with subtab_multi_cox:
+                c_mcox_m, c_mcox_s = st.columns([2.2, 1.0])
+                with c_mcox_m:
+                    render_cox_regression_analysis(multi_survival_df, group_col='cohort', key_suffix="multi")
+                with c_mcox_s:
+                    render_cox_math_card()
         else:
             st.info("Log-Rank and Cox Regression require at least 2 CSV files to compare.")

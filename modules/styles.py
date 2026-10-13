@@ -106,32 +106,72 @@ html, body, [class*="css"] {
     color: var(--text-main) !important;
 }
 
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    background-color: rgba(241, 245, 249, 0.85) !important;
+    padding: 6px !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(203, 213, 225, 0.7) !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+    border-radius: 9px !important;
+    padding: 9px 20px !important;
+    font-weight: 600 !important;
+    font-size: 0.92rem !important;
+    transition: all 0.2s ease !important;
+    color: #475569 !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+}
+
 .hero-card {
     background: var(--hero-bg) !important;
     border: 1px solid var(--hero-border) !important;
-    border-radius: 20px;
-    padding: 30px 38px;
-    margin-bottom: 24px;
-    box-shadow: var(--card-shadow);
+    border-radius: 18px;
+    padding: 28px 34px;
+    margin-bottom: 22px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
     position: relative;
     overflow: hidden;
 }
 
-.hero-card::after {
-    content: "🐝";
-    position: absolute;
-    right: 28px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 90px;
-    opacity: 0.16;
-    pointer-events: none;
+.hero-badge-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.saas-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(203, 213, 225, 0.8);
+    border-radius: 9999px;
+    padding: 4px 12px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #0f172a;
+    letter-spacing: 0.3px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+}
+
+.saas-pill-live {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+    color: #047857;
 }
 
 .hero-title {
-    font-size: 32px;
+    font-size: 28px;
     font-weight: 800;
-    letter-spacing: -0.5px;
+    letter-spacing: -0.6px;
     background: var(--hero-title-gradient);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -147,15 +187,15 @@ html, body, [class*="css"] {
 .glass-card {
     background: var(--card-bg) !important;
     border: 1px solid var(--card-border) !important;
-    border-radius: 16px;
+    border-radius: 14px;
     padding: 22px;
-    margin-bottom: 24px;
+    margin-bottom: 22px;
     backdrop-filter: blur(12px);
-    box-shadow: var(--card-shadow);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
 }
 
 .section-title {
-    font-size: 19px;
+    font-size: 18px;
     font-weight: 700;
     color: var(--text-main) !important;
     margin-top: 10px;
@@ -168,16 +208,17 @@ html, body, [class*="css"] {
 .kpi-card {
     background: var(--kpi-bg) !important;
     border: 1px solid var(--kpi-border) !important;
-    border-radius: 14px;
-    padding: 16px 20px;
+    border-top: 3px solid #f59e0b !important;
+    border-radius: 12px;
+    padding: 16px 18px;
     text-align: center;
     backdrop-filter: blur(10px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-    transition: transform 0.2s ease, border-color 0.2s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .kpi-card:hover {
-    transform: translateY(-3px);
-    border-color: rgba(245, 158, 11, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.07);
 }
 .kpi-val {
     font-size: 26px;
@@ -245,9 +286,36 @@ html, body, [class*="css"] {
 
 def render_sidebar_controls():
     """Renders the aesthetic, statistical, and chart controls in the sidebar."""
-    st.sidebar.markdown("<h2 class='sidebar-h2'>🎨 Chart Studio Controls</h2>", unsafe_allow_html=True)
-    primary_color = st.sidebar.color_picker("Primary Color (Mortality)", "#ef4444")
-    secondary_color = st.sidebar.color_picker("Secondary Color (Survival)", "#f59e0b")
+    st.sidebar.markdown("<h2 class='sidebar-h2'>🎨 Chart Studio & Color Studio</h2>", unsafe_allow_html=True)
+
+    theme_presets = {
+        "Default Bioassay (Crimson / Amber)": ("#ef4444", "#f59e0b", "#10b981"),
+        "Nature Emerald & Forest Teal": ("#059669", "#0d9488", "#10b981"),
+        "Clinical Sapphire & Sky Cyan": ("#2563eb", "#0284c7", "#10b981"),
+        "High-Contrast Charcoal & Orange": ("#1e293b", "#ea580c", "#10b981"),
+        "Toxic Twilight (Violet & Rose)": ("#7c3aed", "#e11d48", "#10b981"),
+        "Custom Colors...": (None, None, None)
+    }
+
+    selected_theme = st.sidebar.selectbox("Scientific Palette Theme", list(theme_presets.keys()), index=0)
+    preset_p, preset_s, preset_a = theme_presets[selected_theme]
+
+    # Pre-populate session state if preset selected
+    if preset_p is not None:
+        if st.session_state.get('last_theme') != selected_theme:
+            st.session_state['custom_primary'] = preset_p
+            st.session_state['custom_secondary'] = preset_s
+            st.session_state['last_theme'] = selected_theme
+
+    default_prim = st.session_state.get('custom_primary', preset_p or "#ef4444")
+    default_sec = st.session_state.get('custom_secondary', preset_s or "#f59e0b")
+
+    c_cp1, c_cp2 = st.sidebar.columns(2)
+    with c_cp1:
+        primary_color = st.color_picker("Primary (Mortality)", default_prim, key="sb_prim_picker")
+    with c_cp2:
+        secondary_color = st.color_picker("Secondary (Survival)", default_sec, key="sb_sec_picker")
+
     line_width = st.sidebar.slider("Line Width", min_value=1.0, max_value=5.0, value=2.4)
     marker_size = st.sidebar.slider("Marker Size", min_value=3.0, max_value=12.0, value=7.0)
     font_size = st.sidebar.slider("Font Size", min_value=8, max_value=18, value=11)
@@ -286,11 +354,16 @@ def render_sidebar_controls():
 
 
 def render_hero_banner():
-    """Renders the top branding hero card."""
+    """Renders the top SaaS branding hero card."""
     st.markdown("""
 <div class="hero-card">
-    <div class="hero-title">🐝 Bee Observation & Survival Analytics Studio</div>
-    <div class="hero-subtitle">Publication-Grade Statistical Modeling, Environmental Correlation & Individual Bee Tracking</div>
+    <div class="hero-badge-row">
+        <span class="saas-pill saas-pill-live">● Bioassay Engine v2.4 Active</span>
+        <span class="saas-pill">⚡ Probit & Cox PH Suite</span>
+        <span class="saas-pill">🔬 EPA / OECD / Finney Standards</span>
+    </div>
+    <div class="hero-title">🐝 ApiaryBio™ Survival & Toxicological Analytics Studio</div>
+    <div class="hero-subtitle">Enterprise Biostatistical Modeling • Probit LTₓ Spectrum • Mantel-Cox Log-Rank Tests • Cox Proportional Hazards Uncertainty</div>
 </div>
 """, unsafe_allow_html=True)
 

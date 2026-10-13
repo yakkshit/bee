@@ -12,7 +12,12 @@ from scipy.stats import norm, linregress
 from lifelines import KaplanMeierFitter
 
 from modules.parser import DEFAULT_CSV, parse_time_data, extract_individual_bee_survival, calculate_lt_percentiles
-from modules.survival_stats import render_log_rank_analysis, render_cox_regression_analysis
+from modules.survival_stats import (
+    render_log_rank_analysis,
+    render_cox_regression_analysis,
+    render_logrank_math_card,
+    render_cox_math_card
+)
 
 
 def render_single_batch_tab(settings=None):
@@ -517,7 +522,7 @@ def render_single_batch_tab(settings=None):
             lt_preset = st.radio(
                 "Percentile Selection Presets:",
                 [
-                    "Standard (LT10, LT20, LT50, LT90)",
+                    "Standard (LT10, LT20, LT30, LT50, LT90)",
                     "Quartiles (LT25, LT50, LT75)",
                     "Full Decile Spectrum (10% to 90%)",
                     "Custom Percentile Choice"
@@ -526,8 +531,8 @@ def render_single_batch_tab(settings=None):
                 key="single_lt_preset"
             )
 
-        if lt_preset == "Standard (LT10, LT20, LT50, LT90)":
-            chosen_percentiles = [10, 20, 50, 90]
+        if lt_preset == "Standard (LT10, LT20, LT30, LT50, LT90)":
+            chosen_percentiles = [10, 20, 30, 50, 90]
         elif lt_preset == "Quartiles (LT25, LT50, LT75)":
             chosen_percentiles = [25, 50, 75]
         elif lt_preset == "Full Decile Spectrum (10% to 90%)":
@@ -889,60 +894,76 @@ def render_single_batch_tab(settings=None):
         st.markdown("#### Inferential Biostatistical Modeling")
         st.caption("Standard Finney Probit linear transformation, Log-Rank survival distributions test, and multivariable Cox Proportional Hazards regression.")
 
-        c_s1, c_s2 = st.columns(2)
+        subtab_prob, subtab_lr_s, subtab_cox_s = st.tabs([
+            "📈 Finney Probit Regression",
+            "📉 Log-Rank (Mantel-Cox) Test",
+            "🌲 Cox Proportional Hazards Model"
+        ])
 
-        if len(log_time) > 1:
-            with c_s1:
-                st.subheader("Probit Regression (Time-Mortality)")
-                fig_probit, ax_probit = plt.subplots(figsize=(7.0, 5.2), dpi=300)
-                ax_probit.scatter(log_time, probit_y, color=primary_color, s=marker_size**2 * 1.5, edgecolors='black')
-                x_line = np.linspace(min(log_time), max(log_time), 100)
-                y_line = probit_a + probit_b * x_line
-                ax_probit.plot(x_line, y_line, color='#1e293b', linewidth=line_width, linestyle=line_style)
-                eq_text = f"PROBIT(P) = {probit_a:.2f} + {probit_b:.2f}x\nR² = {probit_r**2:.4f}"
-                ax_probit.text(0.05, 0.95, eq_text, transform=ax_probit.transAxes, fontsize=10.5, verticalalignment='top', bbox=dict(boxstyle='square,pad=0.3', facecolor='white', edgecolor='#e0e0e0', alpha=0.85))
-                ax_probit.set_xlabel('Log10(Observation Time / Days)', fontsize=12, fontweight='bold', labelpad=7)
-                ax_probit.set_ylabel('Probit(P)', fontsize=12, fontweight='bold', labelpad=7)
-                ax_probit.spines['top'].set_visible(False)
-                ax_probit.spines['right'].set_visible(False)
-                fig_probit.tight_layout()
-                st.pyplot(fig_probit)
-                get_image_download_link(fig_probit, 'fig_probit_regression.png', 'Download Probit Regression', 't5_probit')
+        with subtab_prob:
+            c_s1, c_s2 = st.columns(2)
+            if len(log_time) > 1:
+                with c_s1:
+                    st.subheader("Probit Regression (Time-Mortality)")
+                    fig_probit, ax_probit = plt.subplots(figsize=(7.0, 5.2), dpi=300)
+                    ax_probit.scatter(log_time, probit_y, color=primary_color, s=marker_size**2 * 1.5, edgecolors='black')
+                    x_line = np.linspace(min(log_time), max(log_time), 100)
+                    y_line = probit_a + probit_b * x_line
+                    ax_probit.plot(x_line, y_line, color='#1e293b', linewidth=line_width, linestyle=line_style)
+                    eq_text = f"PROBIT(P) = {probit_a:.2f} + {probit_b:.2f}x\nR² = {probit_r**2:.4f}"
+                    ax_probit.text(0.05, 0.95, eq_text, transform=ax_probit.transAxes, fontsize=10.5, verticalalignment='top', bbox=dict(boxstyle='square,pad=0.3', facecolor='white', edgecolor='#e0e0e0', alpha=0.85))
+                    ax_probit.set_xlabel('Log10(Observation Time / Days)', fontsize=12, fontweight='bold', labelpad=7)
+                    ax_probit.set_ylabel('Probit(P)', fontsize=12, fontweight='bold', labelpad=7)
+                    ax_probit.spines['top'].set_visible(False)
+                    ax_probit.spines['right'].set_visible(False)
+                    fig_probit.tight_layout()
+                    st.pyplot(fig_probit)
+                    get_image_download_link(fig_probit, 'fig_probit_regression.png', 'Download Probit Regression', 't5_probit')
 
-            with c_s2:
-                st.subheader("Probit Model Parameters")
-                p_r2 = probit_r**2
-                st.markdown(f"""
-                <div class="glass-card">
-                    <p><b>Model Formula:</b> <code>Probit(P) = a + b · log₁₀(t)</code></p>
-                    <p><b>Slope (b):</b> <code>{probit_b:.4f}</code></p>
-                    <p><b>Intercept (a):</b> <code>{probit_a:.4f}</code></p>
-                    <p><b>Pearson Correlation (r):</b> <code>{probit_r:.4f}</code></p>
-                    <p><b>Coefficient of Determination (R²):</b> <code>{p_r2:.4f}</code></p>
-                    <p><b>Status:</b> {'✅ High Linear Fit' if p_r2 > 0.8 else ('⚠️ Moderate Linear Fit' if p_r2 > 0.5 else 'ℹ️ Low Linear Correlation')}</p>
-                </div>
-                """, unsafe_allow_html=True)
+                with c_s2:
+                    st.subheader("Probit Model Parameters")
+                    p_r2 = probit_r**2
+                    st.markdown(f"""
+                    <div class="glass-card">
+                        <p><b>Model Formula:</b> <code>Probit(P) = a + b · log₁₀(t)</code></p>
+                        <p><b>Slope (b):</b> <code>{probit_b:.4f}</code></p>
+                        <p><b>Intercept (a):</b> <code>{probit_a:.4f}</code></p>
+                        <p><b>Pearson Correlation (r):</b> <code>{probit_r:.4f}</code></p>
+                        <p><b>Coefficient of Determination (R²):</b> <code>{p_r2:.4f}</code></p>
+                        <p><b>Status:</b> {'✅ High Linear Fit' if p_r2 > 0.8 else ('⚠️ Moderate Linear Fit' if p_r2 > 0.5 else 'ℹ️ Low Linear Correlation')}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("Insufficient observation days to fit Probit regression.")
 
-        st.markdown("---")
-        st.subheader("Log-Rank Survival Test (By Treatment)")
-        treatment_vals = [str(x).strip() for x in df['Treatment'].unique() if pd.notna(x) and str(x).strip() != ''] if 'Treatment' in df.columns else []
-        if len(treatment_vals) >= 2:
-            single_bees_df = extract_individual_bee_survival(df, batch_name="Single Batch", elapsed_days=elapsed_days)
-            render_log_rank_analysis(single_bees_df, group_col='treatment')
-        else:
-            t_curr = treatment_vals[0] if treatment_vals else "None"
-            st.info(f"💡 **Log-Rank Survival Test**: The uploaded file contains only 1 treatment cohort ('{t_curr}'). Log-Rank test requires at least 2 distinct treatment cohorts to compare. Upload multiple CSV files in the **'Multi-CSV Probit Comparison'** or **'Survival Statistics'** tab.")
+        with subtab_lr_s:
+            col_lrs_m, col_lrs_side = st.columns([2.2, 1.0])
+            with col_lrs_m:
+                st.subheader("Log-Rank Survival Test (By Treatment)")
+                treatment_vals = [str(x).strip() for x in df['Treatment'].unique() if pd.notna(x) and str(x).strip() != ''] if 'Treatment' in df.columns else []
+                if len(treatment_vals) >= 2:
+                    single_bees_df = extract_individual_bee_survival(df, batch_name="Single Batch", elapsed_days=elapsed_days)
+                    render_log_rank_analysis(single_bees_df, group_col='treatment', key_suffix="single")
+                else:
+                    t_curr = treatment_vals[0] if treatment_vals else "None"
+                    st.info(f"💡 **Log-Rank Survival Test**: The uploaded file contains only 1 treatment cohort ('{t_curr}'). Log-Rank test requires at least 2 distinct treatment cohorts to compare. Upload multiple CSV files in the **'Multi-CSV Probit Comparison'** or **'Survival Statistics'** tab.")
+            with col_lrs_side:
+                render_logrank_math_card()
 
-        st.markdown("---")
-        st.subheader("Cox Proportional Hazards Regression")
-        single_bees_df = extract_individual_bee_survival(df, batch_name="Single Batch", elapsed_days=elapsed_days)
-        treatment_vals = [str(x).strip() for x in df['Treatment'].unique() if pd.notna(x) and str(x).strip() != ''] if 'Treatment' in df.columns else []
-        has_varying_cons = ('mean_consumption' in single_bees_df.columns and single_bees_df['mean_consumption'].nunique() > 1 and float(single_bees_df['mean_consumption'].std()) > 0.05)
-        if len(treatment_vals) >= 2 or has_varying_cons:
-            render_cox_regression_analysis(single_bees_df, group_col='treatment' if len(treatment_vals) > 1 else 'cohort')
-        else:
-            t_curr = treatment_vals[0] if treatment_vals else "None"
-            st.info(f"💡 **Cox Proportional Hazards Regression**: The uploaded file contains only 1 treatment cohort ('{t_curr}') and no varying individual bee feeding records. Cox regression evaluates relative hazard ratios between 2 or more exposure cohorts or across varying individual predictors. Please compare multiple cohorts in the **'Multi-CSV Probit Comparison'** or **'Survival Statistics'** tab.")
+        with subtab_cox_s:
+            col_cxs_m, col_cxs_side = st.columns([2.2, 1.0])
+            with col_cxs_m:
+                st.subheader("Cox Proportional Hazards Regression")
+                single_bees_df = extract_individual_bee_survival(df, batch_name="Single Batch", elapsed_days=elapsed_days)
+                treatment_vals = [str(x).strip() for x in df['Treatment'].unique() if pd.notna(x) and str(x).strip() != ''] if 'Treatment' in df.columns else []
+                has_varying_cons = ('mean_consumption' in single_bees_df.columns and single_bees_df['mean_consumption'].nunique() > 1 and float(single_bees_df['mean_consumption'].std()) > 0.05)
+                if len(treatment_vals) >= 2 or has_varying_cons:
+                    render_cox_regression_analysis(single_bees_df, group_col='treatment' if len(treatment_vals) > 1 else 'cohort', key_suffix="single")
+                else:
+                    t_curr = treatment_vals[0] if treatment_vals else "None"
+                    st.info(f"💡 **Cox Proportional Hazards Regression**: The uploaded file contains only 1 treatment cohort ('{t_curr}') and no varying individual bee feeding records. Cox regression evaluates relative hazard ratios between 2 or more exposure cohorts or across varying individual predictors. Please compare multiple cohorts in the **'Multi-CSV Probit Comparison'** or **'Survival Statistics'** tab.")
+            with col_cxs_side:
+                render_cox_math_card()
 
     # ==========================================
     # TAB 6: PUBLICATION MULTI-PANEL FIGURE

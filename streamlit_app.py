@@ -9,6 +9,7 @@ from modules.styles import (
 from modules.tab_single import render_single_batch_tab
 from modules.tab_multi import render_multi_batch_tab
 from modules.tab_survival import render_survival_tab
+from modules.tab_spss import render_spss_tab
 
 # Page configuration
 st.set_page_config(
@@ -29,10 +30,11 @@ render_hero_banner()
 render_metadata_expander()
 
 # Main Application Tabs
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "🐝 Single CSV Analysis",
     "📈 Multi-CSV Probit Comparison",
-    "🔬 Survival Statistics (Log-Rank & Cox Regression)"
+    "🔬 Survival Statistics (Log-Rank & Cox Regression)",
+    "🔮 SPSS Suite (Coming Soon)"
 ])
 
 with tab1:
@@ -43,3 +45,6 @@ with tab2:
 
 with tab3:
     render_survival_tab()
+
+with tab4:
+    render_spss_tab()
