@@ -88,7 +88,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None):
             ax_km.plot(cens_t, cens_s, '+', color=col, markersize=8, markeredgewidth=2)
 
         median_surv = km_fitter.median_survival_time_
-        median_str = f"{int(round(median_surv))}d" if not np.isnan(median_surv) else "> Max Obs"
+        median_str = f"{int(round(median_surv))}d" if (np.isfinite(median_surv) and median_surv > 0) else "> Max Obs"
         cohort_summary.append({
             "Cohort": g,
             "Sample Size (N)": n_total,

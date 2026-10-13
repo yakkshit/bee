@@ -193,8 +193,8 @@ def parse_batch_df(raw_df, abbott_c=0.0):
     else:
         lt90 = probit_lt90
 
-    lt50_elapsed = int(np.ceil(lt50 - start_time)) if not np.isnan(lt50) else np.nan
-    lt90_elapsed = int(np.ceil(lt90 - start_time)) if not np.isnan(lt90) else np.nan
+    lt50_elapsed = int(np.ceil(lt50 - start_time)) if (np.isfinite(lt50) and lt50 >= start_time) else np.nan
+    lt90_elapsed = int(np.ceil(lt90 - start_time)) if (np.isfinite(lt90) and lt90 >= start_time) else np.nan
 
     # Extract individual bee level survival data for Log-Rank and Cox Regression
     individual_bees = []
@@ -325,8 +325,13 @@ def calculate_lt_percentiles(intercept_a, slope_b, start_time=1.0, times_numeric
         # Theoretical Probit OLS estimate
         if slope_b > 0:
             theo_lt = float(10.0 ** ((probit_score - intercept_a) / slope_b))
-            theo_elapsed = max(0.0, theo_lt - start_time)
-            theo_elapsed_int = int(np.ceil(theo_elapsed))
+            if np.isfinite(theo_lt) and theo_lt >= start_time:
+                theo_elapsed = max(0.0, theo_lt - start_time)
+                theo_elapsed_int = int(np.ceil(theo_elapsed))
+            else:
+                theo_lt = np.nan
+                theo_elapsed = np.nan
+                theo_elapsed_int = np.nan
         else:
             theo_lt = np.nan
             theo_elapsed = np.nan
@@ -366,10 +371,10 @@ def calculate_lt_percentiles(intercept_a, slope_b, start_time=1.0, times_numeric
                         break
 
         # Effective elapsed days: prefer empirical observation if reached, fallback to theoretical model
-        if not np.isnan(emp_elapsed_int):
+        if np.isfinite(emp_elapsed_int):
             effective_elapsed_int = emp_elapsed_int
             status_desc = f"Observed ({emp_elapsed:.1f}d)"
-        elif not np.isnan(theo_elapsed_int):
+        elif np.isfinite(theo_elapsed_int):
             effective_elapsed_int = theo_elapsed_int
             status_desc = f"Probit Model ({theo_elapsed:.1f}d)"
         else:

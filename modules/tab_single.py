@@ -570,19 +570,21 @@ def render_single_batch_tab(settings=None):
             for idx_r, rec in enumerate(lt_records):
                 p_lvl = rec['percentile']
                 lbl = rec['label']
-                t_val = rec['empirical_lt'] if not np.isnan(rec['empirical_lt']) else rec['theoretical_lt']
-                elap_int = rec['effective_elapsed_int']
+                emp_val = rec.get('empirical_lt', np.nan)
+                theo_val = rec.get('theoretical_lt', np.nan)
+                t_val = emp_val if np.isfinite(emp_val) else theo_val
+                elap_int = rec.get('effective_elapsed_int', np.nan)
 
                 color_th = cmap_spec(idx_r / max(1, n_recs - 1) * 0.85 + 0.05) if n_recs > 1 else '#d97706'
 
                 # Horizontal line for target mortality
                 ax_lt_s.axhline(p_lvl, color=color_th, linestyle='--', linewidth=1.2, alpha=0.75, zorder=2)
 
-                if not np.isnan(t_val) and t_val <= max_time * 1.25:
+                if np.isfinite(t_val) and t_val <= max_time * 1.25:
                     ax_lt_s.plot([t_val, t_val], [0, p_lvl], color=color_th, linestyle=':', linewidth=1.3, zorder=2)
                     ax_lt_s.plot([t_val], [p_lvl], marker='o', color=color_th, markersize=8, markeredgecolor='black', zorder=5)
 
-                    txt_badge = f"{lbl} ({elap_int}d)" if not np.isnan(elap_int) else f"{lbl} ({t_val:.1f}d)"
+                    txt_badge = f"{lbl} ({int(round(elap_int))}d)" if np.isfinite(elap_int) else f"{lbl} ({t_val:.1f}d)"
                     ax_lt_s.annotate(
                         txt_badge,
                         xy=(t_val, p_lvl),
@@ -612,7 +614,7 @@ def render_single_batch_tab(settings=None):
         with col_lt2:
             st.subheader("Time-to-Lethal Endpoint Comparison (LTₓ)")
             lbls = [r['label'] for r in lt_records]
-            elap_vals = [r['effective_elapsed_int'] if not np.isnan(r['effective_elapsed_int']) else 0.0 for r in lt_records]
+            elap_vals = [r['effective_elapsed_int'] if np.isfinite(r.get('effective_elapsed_int', np.nan)) else 0.0 for r in lt_records]
             pcts = [r['percentile'] for r in lt_records]
 
             fig_lt_bar, ax_lt_b = plt.subplots(figsize=(7.2, max(4.8, len(lbls) * 0.52)), dpi=300)
@@ -623,10 +625,10 @@ def render_single_batch_tab(settings=None):
             for i in range(len(lbls)):
                 v = elap_vals[i]
                 rec = lt_records[i]
-                if not np.isnan(rec['effective_elapsed_int']) and rec['effective_elapsed_int'] > 0:
+                if np.isfinite(rec.get('effective_elapsed_int', np.nan)) and rec['effective_elapsed_int'] > 0:
                     ax_lt_b.plot([0, v], [i, i], color=bar_colors[i], linewidth=2.4, zorder=2)
                     ax_lt_b.plot(v, i, marker='o', markersize=9.5, color=bar_colors[i], markeredgecolor='black', zorder=3)
-                    ax_lt_b.text(v + 0.25, i, f"{int(v)} Days ({rec['status']})", va='center', ha='left', fontsize=9.5, fontweight='bold', color='#1e293b')
+                    ax_lt_b.text(v + 0.25, i, f"{int(round(v))} Days ({rec['status']})", va='center', ha='left', fontsize=9.5, fontweight='bold', color='#1e293b')
                 else:
                     ax_lt_b.plot([0, 0.4], [i, i], color='#94a3b8', linestyle=':', linewidth=1.5, zorder=2)
                     ax_lt_b.text(0.55, i, "Not Reached in Trial", va='center', ha='left', fontsize=9.0, fontstyle='italic', color='#64748b')
@@ -634,7 +636,7 @@ def render_single_batch_tab(settings=None):
             ax_lt_b.set_yticks(y_pos)
             ax_lt_b.set_yticklabels(lbls, fontsize=11, fontweight='bold')
             ax_lt_b.set_xlabel('Elapsed Observation Time / Days', fontsize=12, fontweight='bold', labelpad=7)
-            max_x = max([v for v in elap_vals if not np.isnan(v)], default=5.0)
+            max_x = max([v for v in elap_vals if np.isfinite(v)], default=5.0)
             ax_lt_b.set_xlim(-0.2, max_x + 3.8)
             ax_lt_b.xaxis.set_major_locator(MaxNLocator(integer=True))
             ax_lt_b.spines['top'].set_visible(False)
@@ -649,9 +651,13 @@ def render_single_batch_tab(settings=None):
         st.subheader("📋 Lethal Time (LTₓ) Toxicological Reference Table")
         table_rows = []
         for r in lt_records:
-            theo_str = f"{r['theoretical_elapsed']:.2f} d" if not np.isnan(r['theoretical_elapsed']) else "N/A"
-            emp_str = f"{r['empirical_elapsed']:.2f} d" if not np.isnan(r['empirical_elapsed']) else "N/A"
-            eff_int_str = f"{r['effective_elapsed_int']} Days" if not np.isnan(r['effective_elapsed_int']) else "Not Reached"
+            t_elap = r.get('theoretical_elapsed', np.nan)
+            e_elap = r.get('empirical_elapsed', np.nan)
+            eff_int = r.get('effective_elapsed_int', np.nan)
+
+            theo_str = f"{t_elap:.2f} d" if np.isfinite(t_elap) else "N/A"
+            emp_str = f"{e_elap:.2f} d" if np.isfinite(e_elap) else "N/A"
+            eff_int_str = f"{int(round(eff_int))} Days" if np.isfinite(eff_int) else "Not Reached"
             table_rows.append({
                 "Lethal Level": r['label'],
                 "Target Mortality (%)": f"{r['percentile']:.1f}%",

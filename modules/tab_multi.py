@@ -167,7 +167,7 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         with k1:
             st.markdown(f'<div class="kpi-card"><div class="kpi-val">{len(processed_batches)}</div><div class="kpi-label">CSV Files</div></div>', unsafe_allow_html=True)
         with k2:
-            valid_lt50 = [b['lt50'] for b in processed_batches if not np.isnan(b['lt50'])]
+            valid_lt50 = [b['lt50'] for b in processed_batches if np.isfinite(b.get('lt50', np.nan)) and b['lt50'] > 0]
             min_lt50_str = f"{int(round(min(valid_lt50)))}d" if valid_lt50 else "N/A"
             st.markdown(f'<div class="kpi-card"><div class="kpi-val">{min_lt50_str}</div><div class="kpi-label">Fastest LT50</div></div>', unsafe_allow_html=True)
         with k3:
@@ -445,11 +445,11 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
 
         bar_width = 0.5 if len(processed_batches) <= 3 else 0.45
         bars = ax_lt.bar(b_names, b_chosen_lt_vals, color=b_colors, edgecolor='black', width=bar_width)
-        max_val = max([v for v in b_chosen_lt_vals if not np.isnan(v)], default=1.0)
+        max_val = max([v for v in b_chosen_lt_vals if np.isfinite(v)], default=1.0)
 
         for bar in bars:
             h = bar.get_height()
-            if not np.isnan(h) and h > 0:
+            if np.isfinite(h) and h > 0:
                 label_text = f"{int(round(h))} Days"
                 ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + (max_val * 0.03 if max_val > 0 else 0.15), label_text, ha='center', va='bottom', fontweight='bold', fontsize=10.5)
 
@@ -478,10 +478,10 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
             lt50_val = b.get('lt50', np.nan)
             lt90_val = b.get('lt90', np.nan)
 
-            lt10_str = f"{int(round(lt10_val))}" if not np.isnan(lt10_val) else "N/A"
-            lt20_str = f"{int(round(lt20_val))}" if not np.isnan(lt20_val) else "N/A"
-            lt50_str = f"{int(round(lt50_val))}" if not np.isnan(lt50_val) else "N/A"
-            lt90_str = f"{int(round(lt90_val))}" if not np.isnan(lt90_val) else "N/A"
+            lt10_str = f"{int(round(lt10_val))}" if (np.isfinite(lt10_val) and lt10_val > 0) else "N/A"
+            lt20_str = f"{int(round(lt20_val))}" if (np.isfinite(lt20_val) and lt20_val > 0) else "N/A"
+            lt50_str = f"{int(round(lt50_val))}" if (np.isfinite(lt50_val) and lt50_val > 0) else "N/A"
+            lt90_str = f"{int(round(lt90_val))}" if (np.isfinite(lt90_val) and lt90_val > 0) else "N/A"
 
             row_data = {
                 "CSV File Name": b['name'],
@@ -499,7 +499,7 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
 
             if active_metric_label not in ["LT10", "LT20", "LT50", "LT90"]:
                 cur_chosen_val = b_chosen_lt_vals[idx_b]
-                row_data[f"{active_metric_label} (Days)"] = f"{int(round(cur_chosen_val))}" if not np.isnan(cur_chosen_val) else "N/A"
+                row_data[f"{active_metric_label} (Days)"] = f"{int(round(cur_chosen_val))}" if (np.isfinite(cur_chosen_val) and cur_chosen_val > 0) else "N/A"
 
             row_data["Final Mortality (%)"] = f"{b['mortality_pct'][-1]:.1f}%" if len(b['mortality_pct']) > 0 else "N/A"
             summary_rows.append(row_data)
