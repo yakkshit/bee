@@ -125,6 +125,27 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
     s = cph.summary
     table_rows = []
 
+    # 1. Insert Baseline Reference Cohort row so all cohorts are fully represented
+    if len(groups) > 1 and ref_selected is not None:
+        ref_clean = clean_cohort_name(ref_selected)
+        ref_code = get_cohort_code(ref_selected)
+        table_rows.append({
+            "Agreed Cohort": ref_clean,
+            "Code Name": ref_code,
+            "Covariate": f"{ref_code} (Reference Baseline)",
+            "Coef (β)": 0.0,
+            "Hazard Ratio (HR)": 1.0,
+            "95% CI Lower": 1.0,
+            "95% CI Upper": 1.0,
+            "95% CI Uncertainty": "[1.00 – 1.00]",
+            "CI Margin (±)": 0.0,
+            "Std Error (SE)": 0.0,
+            "Wald z": 0.0,
+            "p-value": "1.00 (Ref)",
+            "Significance": "⚪ Reference Baseline",
+            "is_reference": True
+        })
+
     for var_name, row in s.iterrows():
         b_coef = float(row['coef'])
         se_val = float(row['se(coef)']) if pd.notna(row['se(coef)']) else 0.0
@@ -191,6 +212,10 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
     # Biological Hazard & Uncertainty Interpretation
     st.markdown("#### 💡 Biological Hazard & Uncertainty Interpretation")
     for r in table_rows:
+        if r.get("is_reference", False):
+            st.write(f"- **{r['Agreed Cohort']} ({r['Code Name']})**: Baseline reference group ($HR = 1.00$, Null Hazard Reference).")
+            continue
+
         hr_item = r["Hazard Ratio (HR)"]
         ci_str = r["95% CI Uncertainty"]
         p_val_str = str(r["p-value"]).split()[0]
