@@ -40,31 +40,33 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
 
     groups = sorted(raw_groups, key=cohort_priority)
 
-    st.markdown("Configure covariates for the Cox Proportional Hazards Model:")
-    c_cfg1, c_cfg2 = st.columns([1, 2])
-    with c_cfg1:
-        if len(groups) > 1:
-            ref_k = f"cox_ref_{group_col}_{key_suffix}" if key_suffix else f"cox_ref_{group_col}"
-            # Default to control / sucrose group
-            default_ref_idx = 0
-            for idx_g, g_val in enumerate(groups):
-                if cohort_priority(g_val) <= 0:
-                    default_ref_idx = idx_g
-                    break
-            ref_selected = st.selectbox("Baseline Reference Cohort (HR = 1.0)", groups, index=default_ref_idx, key=ref_k)
+    # Determine reference category for mathematical dummy encoding (no user baseline selectbox needed)
+    ref_selected = None
+    if len(groups) > 1:
+        if reference_group and reference_group in groups:
+            ref_selected = reference_group
         else:
-            ref_selected = groups[0] if groups else None
+            default_ref = groups[0]
+            for g_val in groups:
+                if cohort_priority(g_val) <= 0:
+                    default_ref = g_val
+                    break
+            ref_selected = default_ref
+    elif len(groups) == 1:
+        ref_selected = groups[0]
 
-    with c_cfg2:
-        cov_options = []
-        for col_key, col_label in [('mean_consumption', "Mean Consumption (µL/day)"), ('temp', "Temperature (°C)"), ('humidity', "Humidity (%)")]:
-            if col_key in survival_df.columns:
-                s_clean = pd.to_numeric(survival_df[col_key], errors='coerce').dropna()
-                if len(s_clean) > 1 and s_clean.nunique() > 1 and float(s_clean.std()) > 0.05:
-                    cov_options.append(col_label)
+    cov_options = []
+    for col_key, col_label in [('mean_consumption', "Mean Consumption (µL/day)"), ('temp', "Temperature (°C)"), ('humidity', "Humidity (%)")]:
+        if col_key in survival_df.columns:
+            s_clean = pd.to_numeric(survival_df[col_key], errors='coerce').dropna()
+            if len(s_clean) > 1 and s_clean.nunique() > 1 and float(s_clean.std()) > 0.05:
+                cov_options.append(col_label)
 
+    if cov_options:
         cov_k = f"cox_covs_{group_col}_{key_suffix}" if key_suffix else f"cox_covs_{group_col}"
-        selected_covs = st.multiselect("Additional Covariates to Include:", cov_options, default=cov_options, key=cov_k)
+        selected_covs = st.multiselect("Additional Covariates to Include in Cox Model:", cov_options, default=cov_options, key=cov_k)
+    else:
+        selected_covs = []
 
     cph_df = survival_df[['duration', 'event']].copy()
 
@@ -125,27 +127,6 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
     s = cph.summary
     table_rows = []
 
-    # 1. Insert Baseline Reference Cohort row so all 4 cohorts are fully represented
-    if ref_selected is not None:
-        ref_clean = clean_cohort_name(ref_selected)
-        ref_code = get_cohort_code(ref_selected)
-        table_rows.append({
-            "Agreed Cohort": ref_clean,
-            "Code Name": ref_code,
-            "Covariate": f"{ref_code} (Reference Baseline)",
-            "Coef (β)": 0.0,
-            "Hazard Ratio (HR)": 1.0,
-            "95% CI Lower": 1.0,
-            "95% CI Upper": 1.0,
-            "95% CI Uncertainty": "[1.00 – 1.00]",
-            "CI Margin (±)": 0.0,
-            "Std Error (SE)": 0.0,
-            "Wald z": 0.0,
-            "p-value": "1.00 (Ref)",
-            "Significance": "⚪ Reference Baseline",
-            "is_reference": True
-        })
-
     for var_name, row in s.iterrows():
         b_coef = float(row['coef'])
         se_val = float(row['se(coef)']) if pd.notna(row['se(coef)']) else 0.0
@@ -174,7 +155,7 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
             raw_c_name = str(var_name)[len("Cohort_"):]
             full_c = clean_cohort_name(raw_c_name)
             code_c = get_cohort_code(raw_c_name)
-            display_name = f"{code_c} (vs. {get_cohort_code(ref_selected)})"
+            display_name = code_c
         else:
             full_c = str(var_name).replace("_", " ")
             code_c = full_c
@@ -208,10 +189,6 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
     # Biological Hazard & Uncertainty Interpretation
     st.markdown("#### 💡 Biological Hazard & Uncertainty Interpretation")
     for r in table_rows:
-        if r.get("is_reference", False):
-            st.write(f"- **{r['Agreed Cohort']} ({r['Code Name']})**: Baseline reference group ($HR = 1.00$, Null Hazard Reference).")
-            continue
-
         hr_item = r["Hazard Ratio (HR)"]
         ci_str = r["95% CI Uncertainty"]
         p_val_str = str(r["p-value"]).split()[0]
@@ -220,7 +197,10 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
         except Exception:
             p_item = 1.0
         cov_name = r["Covariate"]
-        cohort_display = f"{r.get('Agreed Cohort', cov_name)} ({r.get('Code Name', '')})"
+        if r.get('Agreed Cohort') and r.get('Code Name') and r.get('Agreed Cohort') != r.get('Code Name'):
+            cohort_display = f"{r['Agreed Cohort']} ({r['Code Name']})"
+        else:
+            cohort_display = r.get('Code Name') or r.get('Agreed Cohort') or cov_name
 
         if p_item < 0.05:
             if hr_item > 1.0:

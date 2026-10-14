@@ -62,43 +62,30 @@ def render_hazard_ratio_forest_plot(table_rows, group_col='cohort', key_suffix: 
 
     pt_colors = []
     for i, r in enumerate(table_rows):
-        if r.get("is_reference", False):
-            pt_colors.append('#2563eb')
-        elif p_vals[i] < 0.05:
+        if p_vals[i] < 0.05:
             pt_colors.append('#dc2626' if hr_list[i] > 1.0 else '#16a34a')
         else:
             pt_colors.append('#64748b')
 
     for i in range(len(y_pos)):
-        r = table_rows[i]
-        if r.get("is_reference", False):
-            # Baseline reference row plotted with diamond marker at null line
-            ax_fp.plot([1.0], [y_pos[i]], marker='D', color='#2563eb', markersize=9.5, markeredgecolor='black', zorder=5)
-            annot = "HR = 1.00 (Reference Baseline)"
-            ax_fp.text(
-                1.0 + (0.06 * (max_ci - min_ci + 1.0)), y_pos[i], annot,
-                va='center', ha='left', fontsize=9.5, fontweight='bold', color='#1e3a8a',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='#eff6ff', edgecolor='#93c5fd', alpha=0.95, lw=1.2)
-            )
-        else:
-            # 1. Bold shaded CI ribbon
-            ax_fp.plot([ci_l_list[i], ci_u_list[i]], [y_pos[i], y_pos[i]], color=pt_colors[i], linewidth=5.5, alpha=0.35, zorder=2)
+        # 1. Bold shaded CI ribbon
+        ax_fp.plot([ci_l_list[i], ci_u_list[i]], [y_pos[i], y_pos[i]], color=pt_colors[i], linewidth=5.5, alpha=0.35, zorder=2)
 
-            # 2. Prominent Errorbar with square marker and heavy end caps
-            ax_fp.errorbar(
-                hr_list[i], y_pos[i],
-                xerr=[[xerr_low[i]], [xerr_high[i]]],
-                fmt='s', color=pt_colors[i], ecolor=pt_colors[i],
-                elinewidth=2.8, capsize=8.0, capthick=2.5, markersize=9.0, zorder=4
-            )
+        # 2. Prominent Errorbar with square marker and heavy end caps
+        ax_fp.errorbar(
+            hr_list[i], y_pos[i],
+            xerr=[[xerr_low[i]], [xerr_high[i]]],
+            fmt='s', color=pt_colors[i], ecolor=pt_colors[i],
+            elinewidth=2.8, capsize=8.0, capthick=2.5, markersize=9.0, zorder=4
+        )
 
-            # 3. Formatted Badge with clear background box
-            annot = f"HR = {hr_list[i]:.2f}  [95% CI: {ci_l_list[i]:.2f} – {ci_u_list[i]:.2f}]  (p = {p_vals[i]:.3g})"
-            ax_fp.text(
-                ci_u_list[i] + (0.06 * (max_ci - min_ci + 1.0)), y_pos[i], annot,
-                va='center', ha='left', fontsize=9.5, fontweight='bold', color='#0f172a',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='#f8fafc', edgecolor='#cbd5e1', alpha=0.95, lw=1.2)
-            )
+        # 3. Formatted Badge with clear background box
+        annot = f"HR = {hr_list[i]:.2f}  [95% CI: {ci_l_list[i]:.2f} – {ci_u_list[i]:.2f}]  (p = {p_vals[i]:.3g})"
+        ax_fp.text(
+            ci_u_list[i] + (0.06 * (max_ci - min_ci + 1.0)), y_pos[i], annot,
+            va='center', ha='left', fontsize=9.5, fontweight='bold', color='#0f172a',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='#f8fafc', edgecolor='#cbd5e1', alpha=0.95, lw=1.2)
+        )
 
     # Reference neutral zone & null line
     ax_fp.axvline(1.0, color='#dc2626', linestyle='--', linewidth=1.6, zorder=3)
@@ -112,7 +99,6 @@ def render_hazard_ratio_forest_plot(table_rows, group_col='cohort', key_suffix: 
     # Explicit Clinical Forest Plot Legend positioned cleanly above the plot
     legend_elements = [
         Line2D([0], [0], marker='s', color='w', markerfacecolor='#2563eb', markeredgecolor='black', markersize=9, label='Hazard Ratio (HR) Point Estimate'),
-        Line2D([0], [0], marker='D', color='w', markerfacecolor='#2563eb', markeredgecolor='black', markersize=9, label='Reference Baseline (HR = 1.0)'),
         Line2D([0], [0], color='#2563eb', lw=3, label='95% Confidence Interval (CI) Whisker'),
         Line2D([0], [0], color='#dc2626', linestyle='--', lw=1.6, label='Null Line (HR = 1.0)'),
         Patch(facecolor='#f1f5f9', edgecolor='#cbd5e1', label='Neutral Zone (HR 0.9 – 1.1)')
