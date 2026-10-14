@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 from matplotlib.lines import Line2D
 
+from modules.core.time_parser import filter_post_starvation_data
 from modules.parser import (
     parse_batch_df,
     calculate_lt_percentiles,
@@ -20,8 +21,7 @@ from modules.parser import (
     COHORT_PALETTE,
     COHORT_MARKERS,
     COHORT_SUCROSE_2UL,
-    COHORT_ACETONE_5PCT_2UL,
-    filter_post_starvation_data
+    COHORT_ACETONE_5PCT_2UL
 )
 from modules.survival_stats import (
     render_log_rank_analysis,

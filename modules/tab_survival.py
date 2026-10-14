@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 
+from modules.core.time_parser import filter_post_starvation_data
 from modules.parser import (
     extract_individual_bee_survival,
     get_default_4_cohort_dataframes,
@@ -8,11 +9,7 @@ from modules.parser import (
     clean_cohort_name,
     get_cohort_code,
     COHORT_PALETTE,
-    COHORT_MARKERS,
-    AGREED_COHORTS,
-    COHORT_SUCROSE_2UL,
-    COHORT_ACETONE_5PCT_2UL,
-    filter_post_starvation_data
+    COHORT_MARKERS
 )
 from modules.survival_stats import (
     render_log_rank_analysis,
