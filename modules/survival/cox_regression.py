@@ -40,33 +40,31 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
 
     groups = sorted(raw_groups, key=cohort_priority)
 
-    # Determine reference category for mathematical dummy encoding (no user baseline selectbox needed)
-    ref_selected = None
-    if len(groups) > 1:
-        if reference_group and reference_group in groups:
-            ref_selected = reference_group
-        else:
-            default_ref = groups[0]
-            for g_val in groups:
+    st.markdown("Configure covariates for the Cox Proportional Hazards Model:")
+    c_cfg1, c_cfg2 = st.columns([1, 2])
+    with c_cfg1:
+        if len(groups) > 1:
+            ref_k = f"cox_ref_{group_col}_{key_suffix}" if key_suffix else f"cox_ref_{group_col}"
+            # Default to control / sucrose group
+            default_ref_idx = 0
+            for idx_g, g_val in enumerate(groups):
                 if cohort_priority(g_val) <= 0:
-                    default_ref = g_val
+                    default_ref_idx = idx_g
                     break
-            ref_selected = default_ref
-    elif len(groups) == 1:
-        ref_selected = groups[0]
+            ref_selected = st.selectbox("Baseline Reference Cohort (HR = 1.0)", groups, index=default_ref_idx, key=ref_k)
+        else:
+            ref_selected = groups[0] if groups else None
 
-    cov_options = []
-    for col_key, col_label in [('mean_consumption', "Mean Consumption (µL/day)"), ('temp', "Temperature (°C)"), ('humidity', "Humidity (%)")]:
-        if col_key in survival_df.columns:
-            s_clean = pd.to_numeric(survival_df[col_key], errors='coerce').dropna()
-            if len(s_clean) > 1 and s_clean.nunique() > 1 and float(s_clean.std()) > 0.05:
-                cov_options.append(col_label)
+    with c_cfg2:
+        cov_options = []
+        for col_key, col_label in [('mean_consumption', "Mean Consumption (µL/day)"), ('temp', "Temperature (°C)"), ('humidity', "Humidity (%)")]:
+            if col_key in survival_df.columns:
+                s_clean = pd.to_numeric(survival_df[col_key], errors='coerce').dropna()
+                if len(s_clean) > 1 and s_clean.nunique() > 1 and float(s_clean.std()) > 0.05:
+                    cov_options.append(col_label)
 
-    if cov_options:
         cov_k = f"cox_covs_{group_col}_{key_suffix}" if key_suffix else f"cox_covs_{group_col}"
         selected_covs = st.multiselect("Additional Covariates to Include in Cox Model:", cov_options, default=cov_options, key=cov_k)
-    else:
-        selected_covs = []
 
     cph_df = survival_df[['duration', 'event']].copy()
 
@@ -181,6 +179,10 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
 
     res_df = pd.DataFrame(table_rows)
     st.markdown("#### 📋 Cox Proportional Hazards Model Coefficients & Hazard Ratios")
+    if ref_selected is not None and len(groups) > 1:
+        ref_code_str = get_cohort_code(ref_selected)
+        ref_clean_str = clean_cohort_name(ref_selected)
+        st.caption(f"📌 **Baseline Reference Cohort**: `{ref_clean_str}` (`{ref_code_str}`) with reference hazard ratio $HR = 1.00$. All cohort hazard ratios below quantify relative instantaneous mortality risk against this baseline.")
     st.dataframe(res_df, use_container_width=True)
 
     # Render Forest Plot

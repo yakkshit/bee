@@ -172,9 +172,28 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
     st.markdown("#### 👥 Cohort Survival Breakdown (Alive Post-Starvation Baseline)")
     st.dataframe(pd.DataFrame(cohort_summary), use_container_width=True)
 
-    if len(groups) >= 3:
+    if len(groups) >= 2:
         st.markdown("#### 🔄 Post-Hoc Pairwise Log-Rank Comparisons (with Bonferroni Correction)")
-        pairs = list(combinations(groups, 2))
+        col_lr_sel, col_lr_empty = st.columns([1, 1])
+        with col_lr_sel:
+            lr_ref_k = f"lr_ref_{group_col}_{key_suffix}" if key_suffix else f"lr_ref_{group_col}"
+            default_lr_idx = 0
+            for idx_g, g_val in enumerate(groups):
+                if "sucrose" in str(g_val).lower() or "control" in str(g_val).lower():
+                    default_lr_idx = idx_g
+                    break
+            ref_baseline_lr = st.selectbox("Baseline Reference Cohort for Pairwise Comparisons:", groups, index=default_lr_idx, key=lr_ref_k)
+
+        # Build pairwise list, prioritizing pairs with the selected baseline reference
+        pairs = []
+        for g in groups:
+            if g != ref_baseline_lr:
+                pairs.append((ref_baseline_lr, g))
+        if len(groups) >= 3:
+            for g1, g2 in combinations(groups, 2):
+                if (g1, g2) not in pairs and (g2, g1) not in pairs:
+                    pairs.append((g1, g2))
+
         n_comp = max(1, len(pairs))
         pairwise_data = []
         for g1, g2 in pairs:
@@ -184,7 +203,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             e2 = E[m2]
             if np.sum(e1) == 0 and np.sum(e2) == 0:
                 pairwise_data.append({
-                    "Comparison": f"{g1} vs. {g2}",
+                    "Comparison": f"{g2} vs. {g1} (Ref)" if g1 == ref_baseline_lr else f"{g1} vs. {g2}",
                     "Chi² (χ²)": 0.0,
                     "Raw p-value": "1.000",
                     "Bonferroni p-value": "1.000",
@@ -197,7 +216,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
                 p_bonf = min(1.0, p_raw * n_comp)
                 sig_label = "✅ Significant" if p_bonf < 0.05 else "⚪ Not Significant"
                 pairwise_data.append({
-                    "Comparison": f"{g1} vs. {g2}",
+                    "Comparison": f"{g2} vs. {g1} (Ref)" if g1 == ref_baseline_lr else f"{g1} vs. {g2}",
                     "Chi² (χ²)": round(res_p.test_statistic, 3),
                     "Raw p-value": f"{p_raw:.4g}",
                     "Bonferroni p-value": f"{p_bonf:.4g}",
