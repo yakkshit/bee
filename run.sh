@@ -42,5 +42,5 @@ else
     pip install -r requirements.txt
 
     echo "Running Streamlit application..."
-    $PYTHON_CMD -m streamlit run streamlit_app.py
+    python -m streamlit run streamlit_app.py "$@"
 fi

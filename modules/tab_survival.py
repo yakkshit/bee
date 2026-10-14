@@ -1,7 +1,19 @@
 import pandas as pd
 import streamlit as st
 
-from modules.parser import extract_individual_bee_survival
+from modules.parser import (
+    extract_individual_bee_survival,
+    get_default_4_cohort_dataframes,
+    parse_batch_df,
+    clean_cohort_name,
+    get_cohort_code,
+    COHORT_PALETTE,
+    COHORT_MARKERS,
+    AGREED_COHORTS,
+    COHORT_SUCROSE_2UL,
+    COHORT_ACETONE_5PCT_2UL,
+    filter_post_starvation_data
+)
 from modules.survival_stats import (
     render_log_rank_analysis,
     render_cox_regression_analysis,
@@ -15,63 +27,82 @@ def render_survival_tab():
     st.header("🔬 Advanced Survival Statistics: Log-Rank Test & Cox Proportional Hazards")
     st.markdown("Perform formal inferential survival statistics: evaluate whether survival distributions differ significantly between exposure groups using the **Log-Rank (Mantel-Cox) Test**, and quantify relative hazard ratios and covariate impacts via **Cox Proportional Hazards Regression**.")
 
-    stat_source = st.radio(
-        "Select Dataset Source for Survival Statistics:",
-        ["📂 Multi-CSV Comparison Cohorts", "📄 Single CSV Dataset"],
-        horizontal=True
-    )
+    st.info("🕒 **Bioassay Protocol Active**: Starting observations are strictly post-2h starvation period (Time Zero / baseline d0 is excluded from all kinetics and hazard models).")
 
-    # Prepare dataset
-    analysis_df = None
-    group_column = 'cohort'
+    DEFAULT_COLORS = [
+        "#2563eb", "#0d9488", "#f59e0b", "#dc2626", "#8b5cf6",
+        "#ec4899", "#06b6d4", "#f97316", "#84cc16", "#6366f1"
+    ]
+
+    # Automatically take ALL uploaded files (or processed batches / default 4 cohorts)
+    uploaded_dict = st.session_state.get('uploaded_file_dict', {})
+    batches_avail = st.session_state.get('processed_batches', [])
+
+    all_bees_list = []
     color_map = {}
-    is_valid = False
 
-    if stat_source.startswith("📂 Multi-CSV"):
-        batches_avail = st.session_state.get('processed_batches', [])
-        if batches_avail:
-            all_bees_list = []
-            for b in batches_avail:
-                b_df = b.get('individual_bees')
-                if b_df is not None and not b_df.empty:
-                    b_copy = b_df.copy()
-                    b_copy['cohort'] = b['name']
-                    all_bees_list.append(b_copy)
-                    color_map[b['name']] = b.get('color', '#0284c7')
-
-            if len(all_bees_list) >= 2:
-                combined_stat_df = pd.concat(all_bees_list, ignore_index=True)
-                all_cohs = list(color_map.keys())
-                sel_cohs = st.multiselect(
-                    "Select Cohorts to Include in Statistical Comparison:",
-                    all_cohs, default=all_cohs, key="tab3_cohort_select"
-                )
-                if len(sel_cohs) >= 2:
-                    analysis_df = combined_stat_df[combined_stat_df['cohort'].isin(sel_cohs)].copy()
-                    group_column = 'cohort'
-                    is_valid = True
-                else:
-                    st.info("Please select at least 2 cohorts to compare.")
-            else:
-                st.info("At least 2 cohorts are required to perform survival comparisons. Please upload CSV files in the Multi-CSV tab.")
-        else:
-            st.info("No Multi-CSV cohorts found yet. Please view the '📈 Multi-CSV Probit Comparison' tab or upload your files to initialize.")
-
+    if uploaded_dict:
+        for idx_u, (fname, (c_name, c_df)) in enumerate(uploaded_dict.items()):
+            clean_df = filter_post_starvation_data(c_df.copy())
+            b_bees = extract_individual_bee_survival(clean_df, batch_name=c_name)
+            if not b_bees.empty:
+                b_bees['cohort'] = c_name
+                b_bees['cohort_code'] = get_cohort_code(c_name)
+                all_bees_list.append(b_bees)
+                color_map[c_name] = COHORT_PALETTE.get(c_name, DEFAULT_COLORS[idx_u % len(DEFAULT_COLORS)])
+    elif batches_avail:
+        for b in batches_avail:
+            b_df = b.get('individual_bees')
+            if b_df is not None and not b_df.empty:
+                b_copy = b_df.copy()
+                b_copy['cohort'] = b['name']
+                b_copy['cohort_code'] = b.get('code_name', get_cohort_code(b['name']))
+                all_bees_list.append(b_copy)
+                color_map[b['name']] = b.get('color', '#0284c7')
     else:
-        s_df = st.session_state.get('df')
-        if s_df is not None:
-            single_bees_df = extract_individual_bee_survival(s_df, batch_name="Current Dataset")
-            st.markdown(f"**Loaded Dataset:** {len(single_bees_df)} individual bees observed over {len(s_df)} days.")
-            treatment_vals = [str(x).strip() for x in s_df['Treatment'].unique() if pd.notna(x) and str(x).strip() != ''] if 'Treatment' in s_df.columns else []
+        default_dict = get_default_4_cohort_dataframes()
+        for c_name, c_df in default_dict.items():
+            b_bees = extract_individual_bee_survival(c_df, batch_name=c_name)
+            if not b_bees.empty:
+                b_bees['cohort'] = c_name
+                b_bees['cohort_code'] = get_cohort_code(c_name)
+                all_bees_list.append(b_bees)
+                color_map[c_name] = COHORT_PALETTE.get(c_name, '#2563eb')
 
-            analysis_df = single_bees_df
-            group_column = 'treatment' if len(treatment_vals) >= 2 else 'cohort'
-            is_valid = True
-        else:
-            st.info("No single CSV data loaded yet. Please view the '🐝 Single CSV Analysis' tab.")
-
-    if not is_valid or analysis_df is None:
+    if not all_bees_list:
+        st.info("No cohort data available. Please upload CSV files in the Multi-CSV or Single CSV tab.")
         return
+
+    combined_stat_df = pd.concat(all_bees_list, ignore_index=True)
+    all_cohs = list(color_map.keys())
+
+    # Check if single cohort with multiple treatments
+    unique_treatments = [t for t in combined_stat_df['treatment'].unique() if pd.notna(t) and str(t).strip() != '']
+    if len(all_cohs) == 1 and len(unique_treatments) >= 2:
+        group_column = 'treatment'
+        analysis_df = combined_stat_df
+        st.caption(f"📊 Single dataset with multiple treatments detected: comparing `{', '.join(unique_treatments)}`.")
+    elif len(all_cohs) == 1:
+        group_column = 'cohort'
+        analysis_df = combined_stat_df
+    else:
+        group_column = 'cohort'
+        # BY DEFAULT: ALL UPLOADED FILES ARE TAKEN AND SELECTED!
+        sel_cohs = st.multiselect(
+            "Select Cohorts to Include in Statistical Comparison:",
+            all_cohs,
+            default=all_cohs,
+            key="tab3_cohort_select",
+            help="All uploaded files/cohorts are included by default. Deselect any cohort to exclude it from the comparative tests."
+        )
+        if len(sel_cohs) == 0:
+            st.warning("⚠️ Please select at least one cohort.")
+            return
+        analysis_df = combined_stat_df[combined_stat_df['cohort'].isin(sel_cohs)].copy()
+
+    if analysis_df is None or analysis_df.empty:
+        return
+
 
     # Dedicated Subtabs for Cox Regression, Log-Rank, and Mathematical Framework
     subtab_lr, subtab_cox, subtab_math = st.tabs([

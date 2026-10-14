@@ -7,7 +7,22 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 from matplotlib.lines import Line2D
 
-from modules.parser import parse_batch_df, calculate_lt_percentiles
+from modules.parser import (
+    parse_batch_df,
+    calculate_lt_percentiles,
+    clean_cohort_name,
+    get_cohort_code,
+    get_default_4_cohort_dataframes,
+    standardize_observation_df,
+    extract_individual_bee_survival,
+    AGREED_COHORTS,
+    COHORT_CODE_NAMES,
+    COHORT_PALETTE,
+    COHORT_MARKERS,
+    COHORT_SUCROSE_2UL,
+    COHORT_ACETONE_5PCT_2UL,
+    filter_post_starvation_data
+)
 from modules.survival_stats import (
     render_log_rank_analysis,
     render_cox_regression_analysis,
@@ -28,60 +43,62 @@ def render_multi_batch_tab(settings=None):
     st.header("📈 Multi-CSV File Probit & Survival Comparative Analysis")
     st.markdown("Upload multiple CSV files to perform comparative **Probit Analysis**, plot time-mortality & survival curves using distinct colors and shapes for each CSV file, and compare **LT₅₀** metrics.")
 
-    uploaded_batches = st.file_uploader(
-        "📂 Upload CSV Files for Comparison (Multiple files allowed)",
-        type=["csv"],
-        accept_multiple_files=True,
-        key="multi_batch_uploader_key",
-        help="Select multiple CSV files to compare (e.g., control_group.csv, treatment_10uM.csv, etc.)"
-    )
+    st.info("🕒 **Bioassay Protocol Active**: Starting observations are strictly post-2h starvation period (Time Zero / baseline d0 is excluded from all kinetics, LT estimations, and hazard models).")
 
-    raw_batch_dict = {}
+    if 'uploaded_file_dict' not in st.session_state:
+        st.session_state['uploaded_file_dict'] = {}
 
+    col_up_main, col_up_clear = st.columns([3.8, 1.2])
+    with col_up_main:
+        uploaded_batches = st.file_uploader(
+            "📂 Upload CSV Files for Comparison (Multiple files allowed)",
+            type=["csv"],
+            accept_multiple_files=True,
+            key="multi_batch_uploader_key",
+            help="Select experimental CSV files to compare. All uploaded files across Tab 1 and Tab 2 are automatically included and compared by default."
+        )
+    with col_up_clear:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("🗑️ Clear All Uploads", key="multi_clear_uploads_btn", help="Clears uploaded files and reverts to default 4 benchmark cohorts"):
+            st.session_state['uploaded_file_dict'] = {}
+            if 'processed_batches' in st.session_state:
+                del st.session_state['processed_batches']
+            st.rerun()
+
+    # Automatically register any newly uploaded batches into central uploaded_file_dict
     if uploaded_batches:
+        new_batch_added = False
         for f in uploaded_batches:
-            try:
-                b_df = pd.read_csv(f, sep=None, engine='python')
-                b_name = f.name
-                raw_batch_dict[b_name] = b_df
-            except Exception as ex:
-                st.error(f"Error reading file {f.name}: {ex}")
+            if f.name not in st.session_state['uploaded_file_dict']:
+                try:
+                    b_raw = pd.read_csv(f, sep=None, engine='python')
+                    b_clean = standardize_observation_df(b_raw)
+                    b_clean = b_clean.astype(str)
+                    b_clean.replace("nan", "", inplace=True)
+                    norm_name = clean_cohort_name(f.name)
+                    st.session_state['uploaded_file_dict'][f.name] = (norm_name, b_clean)
+                    new_batch_added = True
+                except Exception as ex:
+                    st.error(f"Error reading file {f.name}: {ex}")
+        if new_batch_added:
+            st.rerun()
+
+    # BY DEFAULT: TAKE ALL UPLOADED FILES!
+    raw_batch_dict = {}
+    uploaded_dict = st.session_state.get('uploaded_file_dict', {})
+    if uploaded_dict:
+        for fname, (cohort_name, c_df) in uploaded_dict.items():
+            key_label = cohort_name
+            if key_label in raw_batch_dict:
+                key_label = f"{cohort_name} ({fname})"
+            raw_batch_dict[key_label] = filter_post_starvation_data(c_df.copy())
+
+        st.success(f"✅ **All Uploaded Cohort Datasets Active ({len(raw_batch_dict)} files):** " + " • ".join([f"**{k}** (`{get_cohort_code(k)}`)" for k in raw_batch_dict.keys()]))
     else:
-        st.info("💡 **Showing sample CSV files below.** Upload your custom CSV files above to compare your datasets.")
-
-        d1 = """Day,Bee 1,Bee 2,Bee 3,Bee 4,Bee 5,Bee 6,Bee 7,Bee 8,Bee 9,Bee 10
-Day 1,A,A,A,A,A,A,A,A,A,A
-Day 2,A,A,A,A,A,A,A,A,A,A
-Day 3,A,A,A,A,A,A,A,A,A,A
-Day 4,A,A,A,A,A,D,A,A,A,A
-Day 5,A,A,A,A,A,D,A,A,A,A
-Day 6,A,D,A,A,A,D,A,A,A,A
-Day 7,A,D,A,A,A,D,D,A,A,A
-Day 8,A,D,A,A,A,D,D,A,A,D"""
-
-        d2 = """Day,Bee 1,Bee 2,Bee 3,Bee 4,Bee 5,Bee 6,Bee 7,Bee 8,Bee 9,Bee 10
-Day 1,A,A,A,A,A,A,A,A,A,A
-Day 2,A,D,A,A,A,A,A,A,A,A
-Day 3,A,D,A,D,A,A,A,A,A,A
-Day 4,A,D,A,D,D,A,A,A,A,A
-Day 5,A,D,D,D,D,D,A,A,A,A
-Day 6,D,D,D,D,D,D,A,D,A,A
-Day 7,D,D,D,D,D,D,A,D,D,A
-Day 8,D,D,D,D,D,D,D,D,D,A"""
-
-        d3 = """Day,Bee 1,Bee 2,Bee 3,Bee 4,Bee 5,Bee 6,Bee 7,Bee 8,Bee 9,Bee 10
-Day 1,A,A,D,A,A,D,A,A,D,A
-Day 2,D,A,D,A,D,D,A,A,D,A
-Day 3,D,D,D,A,D,D,D,A,D,A
-Day 4,D,D,D,D,D,D,D,A,D,D
-Day 5,D,D,D,D,D,D,D,D,D,D
-Day 6,D,D,D,D,D,D,D,D,D,D
-Day 7,D,D,D,D,D,D,D,D,D,D
-Day 8,D,D,D,D,D,D,D,D,D,D"""
-
-        raw_batch_dict["sample_control_0uM.csv"] = pd.read_csv(io.StringIO(d1))
-        raw_batch_dict["sample_treatment_10uM.csv"] = pd.read_csv(io.StringIO(d2))
-        raw_batch_dict["sample_treatment_50uM.csv"] = pd.read_csv(io.StringIO(d3))
+        st.info("💡 **Showing 4 Standard Experimental Cohorts below.** Upload your custom CSV files above to automatically compare all your datasets.")
+        default_cohorts = get_default_4_cohort_dataframes()
+        for c_name, c_df in default_cohorts.items():
+            raw_batch_dict[c_name] = c_df
 
     if raw_batch_dict:
         MARKER_OPTIONS = {
@@ -101,14 +118,14 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
         marker_names = list(MARKER_OPTIONS.keys())
 
         DEFAULT_COLORS = [
-            "#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6",
+            "#2563eb", "#0d9488", "#f59e0b", "#dc2626", "#8b5cf6",
             "#ec4899", "#06b6d4", "#f97316", "#84cc16", "#6366f1"
         ]
 
         LINE_STYLES = {"Solid": "-", "Dashed": "--", "Dotted": ":", "Dash-Dot": "-."}
 
-        with st.expander("🎨 Customize File Colors, Shapes & Display Names", expanded=True):
-            st.markdown("Set custom labels, distinct colors, marker shapes, line styles, and legend layout for each CSV file:")
+        with st.expander("🎨 Customize Cohort Colors, Shapes & Display Names", expanded=True):
+            st.markdown("Assign cohorts to the 4 agreed experimental groups, adjust display labels, colors, and markers:")
 
             col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4 = st.columns(4)
             with col_ctrl1:
@@ -124,16 +141,30 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
             batch_config = []
             b_keys = list(raw_batch_dict.keys())
 
-            c_cols = st.columns(min(3, max(1, len(b_keys))))
+            c_cols = st.columns(min(4, max(1, len(b_keys))))
             for idx, orig_name in enumerate(b_keys):
                 col_i = c_cols[idx % len(c_cols)]
                 with col_i:
-                    st.markdown(f"**File {idx+1}: `{orig_name}`**")
-                    custom_label = st.text_input("Display Label", value=orig_name, key=f"bname_{idx}")
-                    default_c = DEFAULT_COLORS[idx % len(DEFAULT_COLORS)]
+                    st.markdown(f"**Cohort {idx+1}:**")
+                    resolved_cohort = clean_cohort_name(orig_name)
+                    code_name = get_cohort_code(resolved_cohort)
+
+                    # Show agreed code name badge
+                    st.markdown(f"<span style='background:#e0f2fe;color:#0369a1;padding:3px 9px;border-radius:12px;font-size:11.5px;font-weight:bold;'>🏷️ Code: {code_name}</span>", unsafe_allow_html=True)
+
+                    cohort_options = AGREED_COHORTS + ["Custom / Other"]
+                    sel_cohort_idx = AGREED_COHORTS.index(resolved_cohort) if resolved_cohort in AGREED_COHORTS else len(AGREED_COHORTS)
+                    cohort_choice = st.selectbox("Agreed Protocol Name", cohort_options, index=sel_cohort_idx, key=f"bcohort_{idx}")
+
+                    default_label = cohort_choice if cohort_choice != "Custom / Other" else orig_name
+                    custom_label = st.text_input("Display Label", value=default_label, key=f"bname_{idx}")
+
+                    default_c = COHORT_PALETTE.get(cohort_choice, DEFAULT_COLORS[idx % len(DEFAULT_COLORS)])
                     custom_color = st.color_picker("Color", default_c, key=f"bcol_{idx}")
 
-                    default_shape_idx = idx % len(marker_names)
+                    pref_marker = COHORT_MARKERS.get(cohort_choice, None)
+                    pref_shape_name = next((k for k, v in MARKER_OPTIONS.items() if v == pref_marker), None) if pref_marker else None
+                    default_shape_idx = marker_names.index(pref_shape_name) if pref_shape_name in marker_names else (idx % len(marker_names))
                     custom_shape_name = st.selectbox("Shape (Marker)", marker_names, index=default_shape_idx, key=f"bshape_{idx}")
                     custom_shape = MARKER_OPTIONS[custom_shape_name]
 
@@ -143,6 +174,7 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                     batch_config.append({
                         'orig_name': orig_name,
                         'name': custom_label,
+                        'code_name': get_cohort_code(custom_label),
                         'color': custom_color,
                         'marker': custom_shape,
                         'marker_name': custom_shape_name,
@@ -150,11 +182,13 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                         'raw_df': raw_batch_dict[orig_name]
                     })
 
+
         processed_batches = []
         for bcfg in batch_config:
             p_res = parse_batch_df(bcfg['raw_df'], abbott_c=abbott_c)
             p_res.update({
                 'name': bcfg['name'],
+                'code_name': bcfg.get('code_name', get_cohort_code(bcfg['name'])),
                 'color': bcfg['color'],
                 'marker': bcfg['marker'],
                 'linestyle': bcfg['linestyle'],
@@ -162,10 +196,12 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
             })
             if 'individual_bees' in p_res and isinstance(p_res['individual_bees'], pd.DataFrame):
                 p_res['individual_bees']['cohort'] = bcfg['name']
+                p_res['individual_bees']['cohort_code'] = bcfg.get('code_name', get_cohort_code(bcfg['name']))
                 p_res['individual_bees']['color'] = bcfg['color']
             processed_batches.append(p_res)
 
         st.session_state['processed_batches'] = processed_batches
+
 
         st.markdown("### 📊 Multi-CSV Key Summary")
         k1, k2, k3, k4 = st.columns(4)
@@ -541,7 +577,7 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                 all_cohort_bees.append(b_copy)
                 c_map[b['name']] = b['color']
 
-        if len(all_cohort_bees) >= 2:
+        if len(all_cohort_bees) >= 1:
             multi_survival_df = pd.concat(all_cohort_bees, ignore_index=True)
 
             subtab_multi_lr, subtab_multi_cox = st.tabs([
@@ -563,4 +599,4 @@ Day 8,D,D,D,D,D,D,D,D,D,D"""
                 with c_mcox_s:
                     render_cox_math_card()
         else:
-            st.info("Log-Rank and Cox Regression require at least 2 CSV files to compare.")
+            st.info("No cohort survival data available to perform Log-Rank and Cox Regression.")
