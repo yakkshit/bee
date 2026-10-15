@@ -1,7 +1,8 @@
 """
 Log-Rank (Mantel-Cox) Survival Analysis Module.
-Performs non-parametric hypothesis testing between cohort survival curves,
-pairwise post-hoc comparisons with Bonferroni correction, and Kaplan-Meier curves.
+Performs formal non-parametric hypothesis testing between cohort survival curves,
+computes Mantel-Haenszel Observed vs. Expected deaths under H₀, pairwise post-hoc tests with Bonferroni correction,
+and renders the dedicated Log-Rank Observed vs. Expected Comparison Plot.
 """
 import io
 from itertools import combinations
@@ -9,41 +10,29 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator
-from lifelines import KaplanMeierFitter
 from lifelines.statistics import logrank_test, multivariate_logrank_test
+from lifelines import NelsonAalenFitter
 
 
 def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, key_suffix: str = ""):
     """
-    Renders 1. Log-Rank (Mantel-Cox) Multi-Cohort Survival Test.
-    Specifically considers alive bees on Day 1 (post-starvation baseline):
-    e.g. if 2 dead bees out of 14 bees on Day 1, N total is 12 bees (not 14 bees).
-    Computes chi2, p-value, df, pairwise comparisons with Bonferroni correction,
-    and a multi-cohort Kaplan-Meier survival curves plot.
+    Renders Plot 2: Log-Rank (Mantel-Cox) Statistical Hypothesis Test.
+    Evaluates whether survival distributions differ significantly between cohorts.
+    Computes chi2, p-value, df, Observed vs. Expected deaths under H0,
+    and renders the dedicated Log-Rank Comparison Plot and Pairwise Bonferroni Table.
     """
     if survival_df is None or survival_df.empty:
         st.warning("No individual survival data available for Log-Rank test.")
         return
 
-    # Alive Bee Cohort Entry Rule strictly for:
-    # '1. Log-Rank (Mantel-Cox) Multi-Cohort Survival Test'
-    # On Day 1, if there are 2 dead bees out of 14 bees, the N total is 12 bees (not 14 bees).
-    # Bees recorded as Dead on Day 1 (duration <= 1.0 and event == 1) died at baseline post-starvation
-    # and are excluded so N total strictly reflects the bees alive at the start of treatment.
-    alive_mask = ~((survival_df['duration'] <= 1.0) & (survival_df['event'] == 1))
-    valid_survival_df = survival_df[alive_mask].copy() if alive_mask.any() else survival_df.copy()
-
-    groups = [g for g in valid_survival_df[group_col].unique() if pd.notna(g) and str(g).strip() != '']
+    groups = [g for g in survival_df[group_col].unique() if pd.notna(g) and str(g).strip() != '']
     if len(groups) == 0:
-        st.warning("No valid cohort data available for survival analysis.")
+        st.warning("No valid cohort data available for Log-Rank test.")
         return
 
-    st.info("🕒 **Alive Bee Cohort Entry Protocol (Active for Log-Rank Model)**: Initial sample size ($N_{\\text{total}}$) strictly includes bees **alive on Day 1** post-starvation baseline. Any bees dead on Day 1 are excluded from the treated cohort at risk, ensuring $N_{\\text{total}}$ represents the true treated population (e.g., $N=12$ alive bees when 2 are dead on Day 1 out of 14).")
-
-    T = valid_survival_df['duration'].values
-    E = valid_survival_df['event'].values
-    G = valid_survival_df[group_col].values
+    T = survival_df['duration'].values
+    E = survival_df['event'].values
+    G = survival_df[group_col].values
 
     total_events = int(np.sum(E))
 
@@ -84,95 +73,140 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             status_txt = "Significant (p < 0.05)" if is_significant else "Not Significant"
             status_col = "#10b981" if is_significant else "#f59e0b"
             st.markdown(f'<div class="kpi-card"><div class="kpi-val" style="color: {status_col}; font-size: 1.15rem;">{status_txt}</div><div class="kpi-label">Statistical Status</div></div>', unsafe_allow_html=True)
-    else:
-        # Single cohort metrics
-        is_significant = False
-        n_tot = len(T)
-        n_ev = total_events
-        n_cens = n_tot - n_ev
-        km_single = KaplanMeierFitter()
-        km_single.fit(T, event_observed=E)
-        med_s = km_single.median_survival_time_
-        med_str = f"{int(round(med_s))}d" if (np.isfinite(med_s) and med_s > 0) else "> Max Obs"
 
-        col_k1, col_k2, col_k3, col_k4 = st.columns(4)
-        with col_k1:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-val">{n_tot}</div><div class="kpi-label">Sample Size (N)</div></div>', unsafe_allow_html=True)
-        with col_k2:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-val">{n_ev}</div><div class="kpi-label">Observed Deaths</div></div>', unsafe_allow_html=True)
-        with col_k3:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-val">{n_cens}</div><div class="kpi-label">Censored / Alive</div></div>', unsafe_allow_html=True)
-        with col_k4:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-val">{med_str}</div><div class="kpi-label">Median Survival (LT50)</div></div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-        st.caption(f"💡 **Single Cohort Survival Profile (`{groups[0]}`)**: Displaying Kaplan-Meier survival curve with Greenwood 95% Confidence Interval. Multi-cohort Log-Rank χ² hypothesis testing evaluates differences between 2 or more cohorts; upload additional CSV files to compare between cohorts.")
+        # Compute Observed vs. Expected Deaths under H0 for each cohort
+        death_times = sorted(survival_df[survival_df['event'] == 1]['duration'].unique())
+        obs_dict = {g: 0 for g in groups}
+        exp_dict = {g: 0.0 for g in groups}
 
-    st.markdown("<br>", unsafe_allow_html=True)
+        for t_death in death_times:
+            at_risk_mask = (T >= t_death)
+            total_at_risk = int(np.sum(at_risk_mask))
+            total_deaths_at_t = int(np.sum((T == t_death) & (E == 1)))
 
-    fig_km, ax_km = plt.subplots(figsize=(9.2, 5.5), dpi=300)
-    ax_km.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+            if total_at_risk == 0:
+                continue
 
-    km_fitter = KaplanMeierFitter()
-    cohort_summary = []
-    default_palette = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4"]
+            for g in groups:
+                g_at_risk = int(np.sum(at_risk_mask & (G == g)))
+                g_deaths = int(np.sum((T == t_death) & (E == 1) & (G == g)))
+                obs_dict[g] += g_deaths
+                exp_dict[g] += total_deaths_at_t * (g_at_risk / total_at_risk)
 
-    for idx_g, g in enumerate(groups):
-        m = (G == g)
-        sub_t = T[m]
-        sub_e = E[m]
-        col = color_map.get(g, default_palette[idx_g % len(default_palette)]) if color_map else default_palette[idx_g % len(default_palette)]
+        default_palette = ["#2563eb", "#0d9488", "#f59e0b", "#dc2626", "#8b5cf6", "#ec4899", "#06b6d4"]
+        cohort_colors = [color_map.get(g, default_palette[i % len(default_palette)]) if color_map else default_palette[i % len(default_palette)] for i, g in enumerate(groups)]
 
-        n_total = len(sub_t)
-        n_events = int(np.sum(sub_e))
-        n_censored = n_total - n_events
-        mort_rate = (n_events / n_total * 100.0) if n_total > 0 else 0.0
+        # Plot mode option: Observed vs Expected Bar Chart or Cumulative Hazard Curves
+        plot_view_k = f"lr_plot_view_{group_col}_{key_suffix}" if key_suffix else f"lr_plot_view_{group_col}"
+        col_pv1, col_pv2 = st.columns([1.5, 2])
+        with col_pv1:
+            plot_view = st.selectbox(
+                "Log-Rank Visualization Mode:",
+                [
+                    "Observed vs. Expected Deaths (O vs. E) Bar Chart",
+                    "Cumulative Hazard Function Curves: H(t) = -ln S(t)"
+                ],
+                index=0,
+                key=plot_view_k
+            )
 
-        km_fitter.fit(sub_t, event_observed=sub_e, label=f"{g} (n={n_total}, dead={n_events})")
-        km_fitter.plot_survival_function(ax=ax_km, color=col, ci_show=True, ci_alpha=0.12, linewidth=2.2)
+        if "Observed vs. Expected" in plot_view:
+            fig_lr, ax_lr = plt.subplots(figsize=(9.2, 5.2), dpi=300)
+            ax_lr.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
-        cens_t = sub_t[sub_e == 0]
-        if len(cens_t) > 0:
-            try:
-                cens_s = km_fitter.predict(cens_t).values
-                ax_km.plot(cens_t, cens_s, '+', color=col, markersize=8, markeredgewidth=2)
-            except Exception:
-                pass
+            x_indices = np.arange(len(groups))
+            bar_width = 0.35
 
-        median_surv = km_fitter.median_survival_time_
-        median_str = f"{int(round(median_surv))}d" if (np.isfinite(median_surv) and median_surv > 0) else "> Max Obs"
-        cohort_summary.append({
-            "Cohort": g,
-            "Sample Size (N)": n_total,
-            "Deaths (Events)": n_events,
-            "Censored": n_censored,
-            "Mortality Rate (%)": f"{mort_rate:.1f}%",
-            "Median Survival (LT50)": median_str
-        })
+            O_vals = [obs_dict[g] for g in groups]
+            E_vals = [exp_dict[g] for g in groups]
 
-    ax_km.axhline(0.5, color='#475569', linestyle=':', linewidth=1.3, label='50% Threshold (LT50)')
-    ax_km.set_xlabel('Elapsed Observation Time (Days)', fontsize=12, fontweight='bold', labelpad=8)
-    ax_km.set_ylabel('Survival Probability S(t)', fontsize=12, fontweight='bold', labelpad=8)
-    ax_km.set_ylim(-0.02, 1.05)
-    max_plot_t = max(T) if len(T) > 0 else 8.0
-    ax_km.set_xlim(left=0.8, right=max(max_plot_t + 0.5, 8.0))
-    ax_km.xaxis.set_major_locator(MultipleLocator(1))
-    ax_km.spines['top'].set_visible(False)
-    ax_km.spines['right'].set_visible(False)
-    ax_km.legend(loc='lower left', frameon=True, facecolor='white', framealpha=0.92, fontsize=10)
-    fig_km.tight_layout()
+            bars_obs = ax_lr.bar(x_indices - bar_width/2, O_vals, bar_width, label='Observed Deaths (O)', color=cohort_colors, edgecolor='black', linewidth=1.1, zorder=3)
+            bars_exp = ax_lr.bar(x_indices + bar_width/2, E_vals, bar_width, label='Expected Deaths under H₀ (E)', color=cohort_colors, alpha=0.35, hatch='//', edgecolor='black', linewidth=1.1, zorder=3)
 
-    st.pyplot(fig_km)
+            max_y = max(max(O_vals, default=1), max(E_vals, default=1))
 
-    buf_km = io.BytesIO()
-    fig_km.savefig(buf_km, format="png", dpi=300, bbox_inches='tight')
-    dl_km_key = f"dl_km_plot_{group_col}_{key_suffix}" if key_suffix else f"dl_km_plot_{group_col}"
-    st.download_button("📥 Download Kaplan-Meier Multi-Cohort Plot (PNG)", data=buf_km.getvalue(), file_name="logrank_kaplan_meier_comparison.png", mime="image/png", key=dl_km_key)
-    plt.close(fig_km)
+            for i, g in enumerate(groups):
+                o_val = O_vals[i]
+                e_val = E_vals[i]
+                ax_lr.text(x_indices[i] - bar_width/2, o_val + (max_y * 0.02), str(o_val), ha='center', va='bottom', fontweight='bold', fontsize=9.5)
+                ax_lr.text(x_indices[i] + bar_width/2, e_val + (max_y * 0.02), f"{e_val:.1f}", ha='center', va='bottom', fontsize=9.0)
 
-    st.markdown("#### 👥 Cohort Survival Breakdown (Alive Post-Starvation Baseline)")
-    st.dataframe(pd.DataFrame(cohort_summary), use_container_width=True)
+                ratio = o_val / e_val if e_val > 0 else 1.0
+                r_col = '#10b981' if ratio < 1.0 else '#ef4444'
+                badge_text = f"O/E = {ratio:.2f}"
+                ax_lr.text(x_indices[i], max(o_val, e_val) + (max_y * 0.12), badge_text, ha='center', va='bottom', fontweight='bold', color=r_col, fontsize=9.5, bbox=dict(boxstyle='round,pad=0.25', facecolor='white', edgecolor=r_col, alpha=0.92))
 
-    if len(groups) >= 2:
+            ax_lr.set_ylabel('Bee Mortality Count (Deaths)', fontsize=12, fontweight='bold', labelpad=8)
+            ax_lr.set_xticks(x_indices)
+            ax_lr.set_xticklabels(groups, fontsize=10.5, fontweight='bold', rotation=15, ha='right')
+            ax_lr.set_ylim(0, max_y * 1.25)
+            ax_lr.set_title(f'Log-Rank Test: Observed vs. Expected Deaths Under H₀ (χ² = {chisq:.3f}, p = {p_str})', fontsize=13, fontweight='bold', pad=12)
+            ax_lr.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.92, fontsize=10)
+            ax_lr.spines['top'].set_visible(False)
+            ax_lr.spines['right'].set_visible(False)
+            fig_lr.tight_layout()
+
+            st.pyplot(fig_lr)
+
+            buf_lr = io.BytesIO()
+            fig_lr.savefig(buf_lr, format="png", dpi=300, bbox_inches='tight')
+            dl_lr_k = f"dl_lr_oe_plot_{group_col}_{key_suffix}" if key_suffix else f"dl_lr_oe_plot_{group_col}"
+            st.download_button("📥 Download Log-Rank Observed vs. Expected Plot (PNG)", data=buf_lr.getvalue(), file_name="logrank_observed_vs_expected.png", mime="image/png", key=dl_lr_k)
+            plt.close(fig_lr)
+
+        else:
+            # Cumulative Hazard Plot: H(t) via Nelson-Aalen Estimator
+            fig_hz, ax_hz = plt.subplots(figsize=(9.2, 5.2), dpi=300)
+            ax_hz.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+
+            for idx_g, g in enumerate(groups):
+                m = (G == g)
+                sub_t = T[m]
+                sub_e = E[m]
+                col = cohort_colors[idx_g]
+                naf_hz = NelsonAalenFitter()
+                naf_hz.fit(sub_t, event_observed=sub_e, label=g)
+                naf_hz.plot_cumulative_hazard(ax=ax_hz, color=col, linewidth=2.2, ci_show=False)
+
+            ax_hz.set_xlabel('Elapsed Observation Time (Days)', fontsize=12, fontweight='bold', labelpad=8)
+            ax_hz.set_ylabel('Cumulative Hazard H(t) = -ln Ŝ(t)', fontsize=12, fontweight='bold', labelpad=8)
+            ax_hz.set_title(f'Log-Rank Cumulative Hazard Curves H(t) Across Cohorts (χ² = {chisq:.3f}, p = {p_str})', fontsize=13, fontweight='bold', pad=12)
+            ax_hz.spines['top'].set_visible(False)
+            ax_hz.spines['right'].set_visible(False)
+            ax_hz.legend(loc='upper left', frameon=True, facecolor='white', framealpha=0.92, fontsize=10)
+            fig_hz.tight_layout()
+
+            st.pyplot(fig_hz)
+
+            buf_hz = io.BytesIO()
+            fig_hz.savefig(buf_hz, format="png", dpi=300, bbox_inches='tight')
+            dl_hz_k = f"dl_lr_hz_plot_{group_col}_{key_suffix}" if key_suffix else f"dl_lr_hz_plot_{group_col}"
+            st.download_button("📥 Download Cumulative Hazard Plot (PNG)", data=buf_hz.getvalue(), file_name="logrank_cumulative_hazard.png", mime="image/png", key=dl_hz_k)
+            plt.close(fig_hz)
+
+        # Observed vs. Expected Data Table
+        st.markdown("#### 📊 Mantel-Cox Observed vs. Expected Breakdown")
+        oe_table = []
+        for g in groups:
+            o_c = obs_dict[g]
+            e_c = exp_dict[g]
+            oe_ratio = o_c / e_c if e_c > 0 else 1.0
+            diff = o_c - e_c
+            contrib = (diff**2) / e_c if e_c > 0 else 0.0
+            oe_table.append({
+                "Cohort": g,
+                "Observed Deaths (O)": o_c,
+                "Expected Deaths (E)": f"{e_c:.2f}",
+                "O - E Deviation": f"{diff:+.2f}",
+                "O / E Ratio": f"{oe_ratio:.2f}",
+                "Relative Risk Status": "🟢 Protected (Fewer Deaths)" if oe_ratio < 1.0 else "🔴 Elevated Hazard (Excess Deaths)",
+                "Chi² Contribution ((O-E)²/E)": f"{contrib:.3f}"
+            })
+        st.dataframe(pd.DataFrame(oe_table), use_container_width=True)
+
+        # Post-Hoc Pairwise Log-Rank Comparisons (with Bonferroni Correction)
         st.markdown("#### 🔄 Post-Hoc Pairwise Log-Rank Comparisons (with Bonferroni Correction)")
         col_lr_sel, col_lr_empty = st.columns([1, 1])
         with col_lr_sel:
@@ -184,7 +218,6 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
                     break
             ref_baseline_lr = st.selectbox("Baseline Reference Cohort for Pairwise Comparisons:", groups, index=default_lr_idx, key=lr_ref_k)
 
-        # Build pairwise list, prioritizing pairs with the selected baseline reference
         pairs = []
         for g in groups:
             if g != ref_baseline_lr:
@@ -227,12 +260,19 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
         if pairwise_data:
             st.dataframe(pd.DataFrame(pairwise_data), use_container_width=True)
 
-    if len(groups) >= 2:
         st.markdown("#### 💡 Biological Interpretation")
         if is_significant:
-            st.success(f"**Statistically Significant Difference Detected:** The overall survival distributions differ significantly across cohorts (Mantel-Cox Log-Rank $\\chi^2 = {chisq:.3f}, df = {df_val}, p = {p_str}$). Reject the null hypothesis of equal survival across treatment cohorts.")
+            st.success(f"**Statistically Significant Difference Detected:** The overall survival distributions differ significantly across cohorts (Mantel-Cox Log-Rank $\\chi^2 = {chisq:.3f}, df = {df_val}, p = {p_str}$). Reject the null hypothesis of equal survival hazard across treatment cohorts.")
         else:
             st.info(f"**No Statistically Significant Difference:** The survival distributions do not differ significantly at the $\\alpha = 0.05$ level (Mantel-Cox Log-Rank $\\chi^2 = {chisq:.3f}, df = {df_val}, p = {p_str}$).")
+
     else:
-        st.markdown("#### 💡 Biological Summary")
-        st.info(f"**Single Cohort Evaluated (`{groups[0]}`):** Median survival ($LT_{{50}}$) is estimated at **{med_str}** with a final mortality rate of **{mort_rate:.1f}%** ({n_events} deaths out of {n_total} bees alive post-starvation baseline). Upload additional cohort CSV files to run comparative Log-Rank hypothesis testing.")
+        # Single cohort metrics
+        st.info(f"💡 **Single Cohort Evaluated (`{groups[0]}`):** Log-Rank hypothesis testing evaluates differences between 2 or more cohorts under $H_0: S_1(t) = S_2(t)$. Upload additional CSV files to execute multi-cohort hypothesis testing.")
+        col_k1, col_k2, col_k3 = st.columns(3)
+        with col_k1:
+            st.markdown(f'<div class="kpi-card"><div class="kpi-val">{len(T)}</div><div class="kpi-label">Sample Size (N)</div></div>', unsafe_allow_html=True)
+        with col_k2:
+            st.markdown(f'<div class="kpi-card"><div class="kpi-val">{total_events}</div><div class="kpi-label">Observed Deaths</div></div>', unsafe_allow_html=True)
+        with col_k3:
+            st.markdown(f'<div class="kpi-card"><div class="kpi-val">{len(T) - total_events}</div><div class="kpi-label">Censored / Alive</div></div>', unsafe_allow_html=True)

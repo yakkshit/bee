@@ -12,9 +12,17 @@ from modules.parser import (
     extract_individual_bee_survival,
     get_cohort_code
 )
+from modules.survival.kaplan_meier import render_kaplan_meier_analysis
 from modules.survival.log_rank import render_log_rank_analysis
 from modules.survival.cox_regression import render_cox_regression_analysis
-from modules.survival.math_cards import render_logrank_math_card, render_cox_math_card
+from modules.survival.math_cards import (
+    render_logrank_math_card,
+    render_cox_math_card,
+    render_kaplan_meier_math_card,
+    render_methodology_comparison_card
+)
+
+
 
 
 def render_single_biostats_view(computed, df, settings=None, image_collector=None):
@@ -38,9 +46,10 @@ def render_single_biostats_view(computed, df, settings=None, image_collector=Non
     st.markdown("#### Inferential Biostatistical Modeling")
     st.caption("Standard Finney Probit linear transformation, Log-Rank survival distributions test, and multivariable Cox Proportional Hazards regression.")
 
-    subtab_prob, subtab_lr_s, subtab_cox_s = st.tabs([
+    subtab_prob, subtab_km_s, subtab_lr_s, subtab_cox_s = st.tabs([
         "📈 Finney Probit Regression",
-        "📉 Log-Rank (Mantel-Cox) Test",
+        "📉 Kaplan–Meier Survival Curves Plot",
+        "📊 Log-Rank (Mantel-Cox) Test",
         "🌲 Cox Proportional Hazards Model"
     ])
 
@@ -81,6 +90,30 @@ def render_single_biostats_view(computed, df, settings=None, image_collector=Non
         else:
             st.info("Insufficient observation days to fit Probit regression.")
 
+    with subtab_km_s:
+        col_kms_m, col_kms_side = st.columns([2.2, 1.0])
+        with col_kms_m:
+            st.subheader("Kaplan–Meier Survival Curves")
+            treatment_vals = [str(x).strip() for x in df['Treatment'].unique() if pd.notna(x) and str(x).strip() != ''] if 'Treatment' in df.columns else []
+            single_bees_df = extract_individual_bee_survival(df, batch_name="Single Batch", elapsed_days=elapsed_days)
+
+            if len(treatment_vals) >= 2:
+                st.caption(f"📊 Multi-treatment sheet detected: plotting `{', '.join(treatment_vals)}`.")
+                render_kaplan_meier_analysis(single_bees_df, group_col='treatment', key_suffix="single_km_tr")
+            else:
+                t_curr = treatment_vals[0] if treatment_vals else "Single Batch"
+                single_bees_df['cohort'] = t_curr
+                single_bees_df['cohort_code'] = get_cohort_code(t_curr)
+                color_map = {t_curr: primary_color}
+                render_kaplan_meier_analysis(single_bees_df, group_col='cohort', color_map=color_map, key_suffix="single_km")
+
+        with col_kms_side:
+            card_tab_km_s, card_tab_comp_km_s = st.tabs(["📐 Kaplan–Meier", "📊 Method Comparison"])
+            with card_tab_km_s:
+                render_kaplan_meier_math_card()
+            with card_tab_comp_km_s:
+                render_methodology_comparison_card()
+
     with subtab_lr_s:
         col_lrs_m, col_lrs_side = st.columns([2.2, 1.0])
         with col_lrs_m:
@@ -99,7 +132,11 @@ def render_single_biostats_view(computed, df, settings=None, image_collector=Non
                 render_log_rank_analysis(single_bees_df, group_col='cohort', color_map=color_map, key_suffix="single_lr")
 
         with col_lrs_side:
-            render_logrank_math_card()
+            card_tab_lr_s, card_tab_comp_lr_s = st.tabs(["📐 Log-Rank Math", "📊 Method Comparison"])
+            with card_tab_lr_s:
+                render_logrank_math_card()
+            with card_tab_comp_lr_s:
+                render_methodology_comparison_card()
 
     with subtab_cox_s:
         col_cxs_m, col_cxs_side = st.columns([2.2, 1.0])
@@ -118,4 +155,9 @@ def render_single_biostats_view(computed, df, settings=None, image_collector=Non
                 render_cox_regression_analysis(single_bees_df, group_col='cohort', key_suffix="single_cox")
 
         with col_cxs_side:
-            render_cox_math_card()
+            card_tab_cox_s, card_tab_mc_s = st.tabs(["🌲 Cox Model", "📊 Method Comparison"])
+            with card_tab_cox_s:
+                render_cox_math_card()
+            with card_tab_mc_s:
+                render_methodology_comparison_card()
+

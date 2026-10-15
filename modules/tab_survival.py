@@ -12,11 +12,16 @@ from modules.parser import (
     COHORT_MARKERS
 )
 from modules.survival_stats import (
+    render_kaplan_meier_analysis,
     render_log_rank_analysis,
     render_cox_regression_analysis,
     render_logrank_math_card,
-    render_cox_math_card
+    render_cox_math_card,
+    render_kaplan_meier_math_card,
+    render_methodology_comparison_card
 )
+
+
 
 
 def render_survival_tab():
@@ -101,18 +106,41 @@ def render_survival_tab():
         return
 
 
-    # Dedicated Subtabs for Cox Regression, Log-Rank, and Mathematical Framework
-    subtab_lr, subtab_cox, subtab_math = st.tabs([
-        "📉 Log-Rank (Mantel-Cox) Comparison",
-        "🌲 Cox Proportional Hazards Regression",
-        "📐 Mathematical Methodology & Bioassay Guide"
+    # Dedicated Subtabs for Kaplan-Meier, Log-Rank, Cox Regression, and Methodology
+    subtab_km, subtab_lr, subtab_cox, subtab_math = st.tabs([
+        "📉 1. Kaplan–Meier Survival Curves Plot",
+        "📊 2. Log-Rank (Mantel-Cox) Test & Observed vs. Expected Plot",
+        "🌲 3. Cox Proportional Hazards Regression & Forest Plot",
+        "📐 4. Mathematical Methodology & Bioassay Guide"
     ])
 
     # ==========================================
-    # SUBTAB 1: LOG-RANK TEST
+    # SUBTAB 1: KAPLAN-MEIER SURVIVAL PLOT
+    # ==========================================
+    with subtab_km:
+        st.subheader("1. Kaplan–Meier Multi-Cohort Survival Analysis & Step-by-Step Life Tables")
+        col_km_main, col_km_side = st.columns([2.2, 1.0])
+
+        with col_km_main:
+            render_kaplan_meier_analysis(
+                analysis_df,
+                group_col=group_column,
+                color_map=color_map,
+                key_suffix="tab3_sub_km"
+            )
+
+        with col_km_side:
+            card_tab_km, card_tab_comp_km = st.tabs(["📐 Kaplan–Meier", "📊 Method Comparison"])
+            with card_tab_km:
+                render_kaplan_meier_math_card()
+            with card_tab_comp_km:
+                render_methodology_comparison_card()
+
+    # ==========================================
+    # SUBTAB 2: LOG-RANK TEST & OBSERVED VS EXPECTED PLOT
     # ==========================================
     with subtab_lr:
-        st.subheader("1. Log-Rank (Mantel-Cox) Multi-Cohort Survival Test")
+        st.subheader("2. Log-Rank (Mantel-Cox) Hypothesis Test & Observed vs. Expected Mortality")
         col_lr_main, col_lr_side = st.columns([2.2, 1.0])
 
         with col_lr_main:
@@ -124,13 +152,17 @@ def render_survival_tab():
             )
 
         with col_lr_side:
-            render_logrank_math_card()
+            card_tab_lr, card_tab_comp_lr = st.tabs(["📐 Log-Rank", "📊 Method Comparison"])
+            with card_tab_lr:
+                render_logrank_math_card()
+            with card_tab_comp_lr:
+                render_methodology_comparison_card()
 
     # ==========================================
-    # SUBTAB 2: COX PROPORTIONAL HAZARDS
+    # SUBTAB 3: COX PROPORTIONAL HAZARDS & FOREST PLOT
     # ==========================================
     with subtab_cox:
-        st.subheader("2. Cox Proportional Hazards Model (Hazard Ratios & Uncertainty)")
+        st.subheader("3. Cox Proportional Hazards Model (Hazard Ratios & Forest Plot)")
         col_cox_main, col_cox_side = st.columns([2.2, 1.0])
 
         with col_cox_main:
@@ -141,14 +173,21 @@ def render_survival_tab():
             )
 
         with col_cox_side:
-            render_cox_math_card()
+            card_tab_cox, card_tab_mc = st.tabs(["🌲 Cox Model", "📊 Method Comparison"])
+            with card_tab_cox:
+                render_cox_math_card()
+            with card_tab_mc:
+                render_methodology_comparison_card()
 
     # ==========================================
-    # SUBTAB 3: FULL METHODOLOGICAL GUIDE
+    # SUBTAB 4: FULL METHODOLOGICAL GUIDE
     # ==========================================
     with subtab_math:
         st.markdown("### 📚 Comprehensive Bioassay Statistics & Mathematical Framework")
+        render_methodology_comparison_card()
+        st.markdown("---")
         col_m1, col_m2 = st.columns(2)
+
 
         with col_m1:
             st.markdown("""

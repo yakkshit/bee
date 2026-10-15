@@ -24,11 +24,16 @@ from modules.parser import (
     COHORT_ACETONE_5PCT_2UL
 )
 from modules.survival_stats import (
+    render_kaplan_meier_analysis,
     render_log_rank_analysis,
     render_cox_regression_analysis,
     render_logrank_math_card,
-    render_cox_math_card
+    render_cox_math_card,
+    render_kaplan_meier_math_card,
+    render_methodology_comparison_card
 )
+
+
 
 
 def render_multi_batch_tab(settings=None):
@@ -380,6 +385,7 @@ def render_multi_batch_tab(settings=None):
         # 3. Survival % Comparison
         with cols_m[1]:
             st.subheader("3. Survival Curve Comparison")
+            st.caption("Observed survival percentage across observation days. For formal non-parametric Kaplan–Meier step curves with censoring, Greenwood CI, Log-Rank tests, and Cox regression, see Section 5 below.")
             fig_s_multi, ax_s = plt.subplots(figsize=(7.5, 5.2), dpi=300)
             if show_grid:
                 ax_s.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
@@ -564,9 +570,10 @@ def render_multi_batch_tab(settings=None):
                         zf.writestr(fn, data)
                 st.download_button("📦 Download All Multi-CSV Plots (ZIP)", data=zip_multi_buf.getvalue(), file_name="multi_csv_plots.zip", mime="application/zip")
 
-        # 5. Log-Rank (Mantel-Cox) Survival Test Across Batches
+        # 5. Combined Kaplan-Meier Survival Analysis, Log-Rank Test & Cox Regression Across Batches
         st.markdown("---")
-        st.subheader("5. Log-Rank (Mantel-Cox) Survival Test Across CSV Files")
+        st.subheader("5. Combined Kaplan-Meier Survival Analysis, Log-Rank Test & Cox Regression")
+        st.caption("Comprehensive inferential survival framework: non-parametric Kaplan–Meier product-limit curves with step-by-step life tables, Mantel-Cox Log-Rank significance testing, and Cox Proportional Hazards regression.")
         all_cohort_bees = []
         c_map = {}
         for b in processed_batches:
@@ -580,23 +587,43 @@ def render_multi_batch_tab(settings=None):
         if len(all_cohort_bees) >= 1:
             multi_survival_df = pd.concat(all_cohort_bees, ignore_index=True)
 
-            subtab_multi_lr, subtab_multi_cox = st.tabs([
-                "📉 Multi-Cohort Log-Rank (Mantel-Cox) Test",
-                "🌲 Multi-Cohort Cox Proportional Hazards Regression"
+            subtab_multi_km, subtab_multi_lr, subtab_multi_cox = st.tabs([
+                "📉 1. Kaplan–Meier Survival Curves Plot",
+                "📊 2. Log-Rank (Mantel-Cox) Test & Observed vs. Expected Plot",
+                "🌲 3. Cox Proportional Hazards Regression & Forest Plot"
             ])
+
+            with subtab_multi_km:
+                c_mkm_m, c_mkm_s = st.columns([2.2, 1.0])
+                with c_mkm_m:
+                    render_kaplan_meier_analysis(multi_survival_df, group_col='cohort', color_map=c_map, key_suffix="multi_km")
+                with c_mkm_s:
+                    card_tab_km, card_tab_comp_km = st.tabs(["📐 Kaplan–Meier", "📊 Method Comparison"])
+                    with card_tab_km:
+                        render_kaplan_meier_math_card()
+                    with card_tab_comp_km:
+                        render_methodology_comparison_card()
 
             with subtab_multi_lr:
                 c_mlr_m, c_mlr_s = st.columns([2.2, 1.0])
                 with c_mlr_m:
-                    render_log_rank_analysis(multi_survival_df, group_col='cohort', color_map=c_map, key_suffix="multi")
+                    render_log_rank_analysis(multi_survival_df, group_col='cohort', color_map=c_map, key_suffix="multi_lr")
                 with c_mlr_s:
-                    render_logrank_math_card()
+                    card_tab_lr, card_tab_comp_lr = st.tabs(["📐 Log-Rank Math", "📊 Method Comparison"])
+                    with card_tab_lr:
+                        render_logrank_math_card()
+                    with card_tab_comp_lr:
+                        render_methodology_comparison_card()
 
             with subtab_multi_cox:
                 c_mcox_m, c_mcox_s = st.columns([2.2, 1.0])
                 with c_mcox_m:
-                    render_cox_regression_analysis(multi_survival_df, group_col='cohort', key_suffix="multi")
+                    render_cox_regression_analysis(multi_survival_df, group_col='cohort', key_suffix="multi_cox")
                 with c_mcox_s:
-                    render_cox_math_card()
+                    card_tab_cox, card_tab_mc = st.tabs(["🌲 Cox Model", "📊 Method Comparison"])
+                    with card_tab_cox:
+                        render_cox_math_card()
+                    with card_tab_mc:
+                        render_methodology_comparison_card()
         else:
             st.info("No cohort survival data available to perform Log-Rank and Cox Regression.")
