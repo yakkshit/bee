@@ -46,21 +46,24 @@ def render_survival_tab():
     if uploaded_dict:
         for idx_u, (fname, (c_name, c_df)) in enumerate(uploaded_dict.items()):
             clean_df = filter_post_starvation_data(c_df.copy())
-            b_bees = extract_individual_bee_survival(clean_df, batch_name=c_name)
+            b_bees = extract_individual_bee_survival(clean_df, batch_name=fname)
             if not b_bees.empty:
-                b_bees['cohort'] = c_name
+                b_bees['cohort'] = fname
+                b_bees['filename'] = fname
                 b_bees['cohort_code'] = get_cohort_code(c_name)
                 all_bees_list.append(b_bees)
-                color_map[c_name] = COHORT_PALETTE.get(c_name, DEFAULT_COLORS[idx_u % len(DEFAULT_COLORS)])
+                color_map[fname] = COHORT_PALETTE.get(c_name, DEFAULT_COLORS[idx_u % len(DEFAULT_COLORS)])
     elif batches_avail:
         for b in batches_avail:
             b_df = b.get('individual_bees')
             if b_df is not None and not b_df.empty:
                 b_copy = b_df.copy()
-                b_copy['cohort'] = b['name']
+                b_fname = b.get('filename') or b.get('orig_name') or b['name']
+                b_copy['cohort'] = b_fname
+                b_copy['filename'] = b_fname
                 b_copy['cohort_code'] = b.get('code_name', get_cohort_code(b['name']))
                 all_bees_list.append(b_copy)
-                color_map[b['name']] = b.get('color', '#0284c7')
+                color_map[b_fname] = b.get('color', '#0284c7')
     else:
         default_dict = get_default_4_cohort_dataframes()
         for c_name, c_df in default_dict.items():

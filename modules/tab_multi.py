@@ -1,3 +1,4 @@
+import os
 import io
 import zipfile
 import numpy as np
@@ -32,6 +33,7 @@ from modules.survival_stats import (
     render_kaplan_meier_math_card,
     render_methodology_comparison_card
 )
+from modules.multi_batch_consumption import render_multi_consumption_analysis
 
 
 
@@ -52,6 +54,12 @@ def render_multi_batch_tab(settings=None):
 
     if 'uploaded_file_dict' not in st.session_state:
         st.session_state['uploaded_file_dict'] = {}
+    if 'user_uploaded_files' not in st.session_state:
+        st.session_state['user_uploaded_files'] = set()
+
+    for k in list(st.session_state['uploaded_file_dict'].keys()):
+        if k not in st.session_state['user_uploaded_files']:
+            del st.session_state['uploaded_file_dict'][k]
 
     col_up_main, col_up_clear = st.columns([3.8, 1.2])
     with col_up_main:
@@ -66,44 +74,59 @@ def render_multi_batch_tab(settings=None):
         st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
         if st.button("🗑️ Clear All Uploads", key="multi_clear_uploads_btn", help="Clears uploaded files and reverts to default 4 benchmark cohorts"):
             st.session_state['uploaded_file_dict'] = {}
+            st.session_state['user_uploaded_files'] = set()
             if 'processed_batches' in st.session_state:
                 del st.session_state['processed_batches']
             st.rerun()
 
     # Automatically register any newly uploaded batches into central uploaded_file_dict
     if uploaded_batches:
-        new_batch_added = False
-        for f in uploaded_batches:
-            if f.name not in st.session_state['uploaded_file_dict']:
+        multi_upload_sig = tuple((f.name, f.size) for f in uploaded_batches)
+        if multi_upload_sig != st.session_state.get('tab2_upload_sig'):
+            st.session_state['tab2_upload_sig'] = multi_upload_sig
+            new_batch_added = False
+            for f in uploaded_batches:
                 try:
-                    b_raw = pd.read_csv(f, sep=None, engine='python')
+                    f.seek(0)
+                    try:
+                        b_raw = pd.read_csv(f, sep=None, engine='python')
+                    except Exception:
+                        f.seek(0)
+                        b_raw = pd.read_csv(f)
                     b_clean = standardize_observation_df(b_raw)
                     b_clean = b_clean.astype(str)
                     b_clean.replace("nan", "", inplace=True)
-                    norm_name = clean_cohort_name(f.name)
+                    norm_name = clean_cohort_name(f.name, b_clean)
+                    st.session_state['user_uploaded_files'].add(f.name)
                     st.session_state['uploaded_file_dict'][f.name] = (norm_name, b_clean)
                     new_batch_added = True
                 except Exception as ex:
                     st.error(f"Error reading file {f.name}: {ex}")
-        if new_batch_added:
-            st.rerun()
+            if new_batch_added:
+                st.rerun()
+    elif 'tab2_upload_sig' in st.session_state:
+        del st.session_state['tab2_upload_sig']
 
     # BY DEFAULT: TAKE ALL UPLOADED FILES!
     raw_batch_dict = {}
     uploaded_dict = st.session_state.get('uploaded_file_dict', {})
     if uploaded_dict:
         for fname, (cohort_name, c_df) in uploaded_dict.items():
-            key_label = cohort_name
-            if key_label in raw_batch_dict:
-                key_label = f"{cohort_name} ({fname})"
-            raw_batch_dict[key_label] = filter_post_starvation_data(c_df.copy())
+            raw_batch_dict[fname] = filter_post_starvation_data(c_df.copy())
 
-        st.success(f"✅ **All Uploaded Cohort Datasets Active ({len(raw_batch_dict)} files):** " + " • ".join([f"**{k}** (`{get_cohort_code(k)}`)" for k in raw_batch_dict.keys()]))
+        st.success(f"✅ **All Uploaded Cohort Datasets Active ({len(raw_batch_dict)} files):** " + " • ".join([f"**{k}**" for k in raw_batch_dict.keys()]))
     else:
         st.info("💡 **Showing 4 Standard Experimental Cohorts below.** Upload your custom CSV files above to automatically compare all your datasets.")
         default_cohorts = get_default_4_cohort_dataframes()
+        default_cohort_filenames = {
+            "sucrose solution 2 microliter": "sucrose_2uL_control.csv",
+            "5 % acetone 2 microliter": "5pct_acetone_2uL.csv",
+            "10 % acetone 2 microliter": "10pct_acetone_2uL.csv",
+            "5 % acetone 5 microliter": "5pct_acetone_5uL.csv",
+        }
         for c_name, c_df in default_cohorts.items():
-            raw_batch_dict[c_name] = c_df
+            def_fname = default_cohort_filenames.get(c_name, f"{c_name.replace(' ', '_')}.csv")
+            raw_batch_dict[def_fname] = c_df
 
     if raw_batch_dict:
         MARKER_OPTIONS = {
@@ -151,7 +174,10 @@ def render_multi_batch_tab(settings=None):
                 col_i = c_cols[idx % len(c_cols)]
                 with col_i:
                     st.markdown(f"**Cohort {idx+1}:**")
-                    resolved_cohort = clean_cohort_name(orig_name)
+                    if orig_name in uploaded_dict:
+                        resolved_cohort = uploaded_dict[orig_name][0]
+                    else:
+                        resolved_cohort = clean_cohort_name(orig_name)
                     code_name = get_cohort_code(resolved_cohort)
 
                     # Show agreed code name badge
@@ -161,8 +187,8 @@ def render_multi_batch_tab(settings=None):
                     sel_cohort_idx = AGREED_COHORTS.index(resolved_cohort) if resolved_cohort in AGREED_COHORTS else len(AGREED_COHORTS)
                     cohort_choice = st.selectbox("Agreed Protocol Name", cohort_options, index=sel_cohort_idx, key=f"bcohort_{idx}")
 
-                    default_label = cohort_choice if cohort_choice != "Custom / Other" else orig_name
-                    custom_label = st.text_input("Display Label", value=default_label, key=f"bname_{idx}")
+                    default_label = orig_name
+                    custom_label = st.text_input("Display Label (File Name)", value=default_label, key=f"bname_{idx}")
 
                     default_c = COHORT_PALETTE.get(cohort_choice, DEFAULT_COLORS[idx % len(DEFAULT_COLORS)])
                     custom_color = st.color_picker("Color", default_c, key=f"bcol_{idx}")
@@ -178,8 +204,10 @@ def render_multi_batch_tab(settings=None):
 
                     batch_config.append({
                         'orig_name': orig_name,
+                        'filename': orig_name,
                         'name': custom_label,
-                        'code_name': get_cohort_code(custom_label),
+                        'cohort_name': cohort_choice,
+                        'code_name': get_cohort_code(cohort_choice),
                         'color': custom_color,
                         'marker': custom_shape,
                         'marker_name': custom_shape_name,
@@ -192,8 +220,11 @@ def render_multi_batch_tab(settings=None):
         for bcfg in batch_config:
             p_res = parse_batch_df(bcfg['raw_df'], abbott_c=abbott_c)
             p_res.update({
+                'orig_name': bcfg['orig_name'],
+                'filename': bcfg['filename'],
                 'name': bcfg['name'],
-                'code_name': bcfg.get('code_name', get_cohort_code(bcfg['name'])),
+                'cohort_name': bcfg['cohort_name'],
+                'code_name': bcfg['code_name'],
                 'color': bcfg['color'],
                 'marker': bcfg['marker'],
                 'linestyle': bcfg['linestyle'],
@@ -201,7 +232,8 @@ def render_multi_batch_tab(settings=None):
             })
             if 'individual_bees' in p_res and isinstance(p_res['individual_bees'], pd.DataFrame):
                 p_res['individual_bees']['cohort'] = bcfg['name']
-                p_res['individual_bees']['cohort_code'] = bcfg.get('code_name', get_cohort_code(bcfg['name']))
+                p_res['individual_bees']['filename'] = bcfg['filename']
+                p_res['individual_bees']['cohort_code'] = bcfg['code_name']
                 p_res['individual_bees']['color'] = bcfg['color']
             processed_batches.append(p_res)
 
@@ -557,22 +589,25 @@ def render_multi_batch_tab(settings=None):
         summary_df = pd.DataFrame(summary_rows)
         st.dataframe(summary_df, use_container_width=True)
 
-        c_csv, c_zip = st.columns(2)
+        c_csv, c_zip_top = st.columns(2)
         with c_csv:
             csv_str = summary_df.to_csv(index=False)
-            st.download_button("📊 Download Comparative Summary Table (CSV)", data=csv_str, file_name="multi_csv_probit_summary.csv", mime="text/csv")
+            st.download_button("📊 Download Comparative Summary Table (CSV)", data=csv_str, file_name="multi_csv_probit_summary.csv", mime="text/csv", key="dl_multi_probit_summary_csv")
 
-        with c_zip:
+        with c_zip_top:
             if multi_plot_images:
                 zip_multi_buf = io.BytesIO()
                 with zipfile.ZipFile(zip_multi_buf, "w", zipfile.ZIP_DEFLATED) as zf:
                     for fn, data in multi_plot_images.items():
                         zf.writestr(fn, data)
-                st.download_button("📦 Download All Multi-CSV Plots (ZIP)", data=zip_multi_buf.getvalue(), file_name="multi_csv_plots.zip", mime="application/zip")
+                st.download_button("📦 Download Generated Plots (ZIP)", data=zip_multi_buf.getvalue(), file_name="multi_csv_plots.zip", mime="application/zip", key="dl_multi_zip_top")
 
-        # 5. Combined Kaplan-Meier Survival Analysis, Log-Rank Test & Cox Regression Across Batches
+        # 5. Dedicated Multi-Cohort Sucrose Consumption & Feeding Kinetics Comparative Analysis
+        render_multi_consumption_analysis(processed_batches, settings=settings, multi_plot_images=multi_plot_images)
+
+        # 6. Combined Kaplan-Meier Survival Analysis, Log-Rank Test & Cox Regression Across Batches
         st.markdown("---")
-        st.subheader("5. Combined Kaplan-Meier Survival Analysis, Log-Rank Test & Cox Regression")
+        st.subheader("6. Combined Kaplan-Meier Survival Analysis, Log-Rank Test & Cox Regression")
         st.caption("Comprehensive inferential survival framework: non-parametric Kaplan–Meier product-limit curves with step-by-step life tables, Mantel-Cox Log-Rank significance testing, and Cox Proportional Hazards regression.")
         all_cohort_bees = []
         c_map = {}
@@ -627,3 +662,18 @@ def render_multi_batch_tab(settings=None):
                         render_methodology_comparison_card()
         else:
             st.info("No cohort survival data available to perform Log-Rank and Cox Regression.")
+
+        # Bottom Unified ZIP Downloader packaging all plots across all sections
+        if multi_plot_images:
+            st.markdown("---")
+            zip_multi_buf_bottom = io.BytesIO()
+            with zipfile.ZipFile(zip_multi_buf_bottom, "w", zipfile.ZIP_DEFLATED) as zf:
+                for fn, data in multi_plot_images.items():
+                    zf.writestr(fn, data)
+            st.download_button(
+                "📦 Download All Multi-CSV Plots & Figures (ZIP Archive)",
+                data=zip_multi_buf_bottom.getvalue(),
+                file_name="all_multi_cohort_plots.zip",
+                mime="application/zip",
+                key="dl_multi_zip_bottom"
+            )

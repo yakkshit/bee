@@ -112,16 +112,69 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
         st.info("🕒 **Pre-Treatment Starvation Exclusion Active**: Initial sample size ($N_{\\text{total}}$) excludes bees dead on Day 1 baseline, ensuring $N_{\\text{total}}$ strictly represents bees surviving post-starvation.")
     else:
         valid_survival_df = survival_df.copy()
-        st.info("🕒 **Standard Kaplan–Meier Active**: All experimental bees enter the cohort on Day 1 ($n_1 = N_{\\text{total}}$). If deaths occur on Day 1, $S(1) = (n_1 - d_1)/n_1$ (e.g., $9/10 = 0.900$), precisely matching the product-limit formula $\\hat{S}(t) = \\prod_{t_i \\le t} (1 - d_i/n_i)$.")
+    # Biological Endpoint and Intake Stratification
+    has_cons_col = ('mean_consumption' in survival_df.columns and (survival_df['mean_consumption'] > 0).any())
+    endpoint_options = ["Overall Mortality & Survival (Standard Kaplan-Meier)"]
+    if has_cons_col:
+        endpoint_options.append("Feeding Persistence (Nutritional Anorexia Endpoint - Time to Cessation)")
+        endpoint_options.append("Survival Stratified by Sucrose Intake (High Feeders vs Low Feeders)")
 
-    groups = [g for g in valid_survival_df[group_col].unique() if pd.notna(g) and str(g).strip() != '']
+    endpoint_k = f"km_endpoint_{group_col}_{key_suffix}" if key_suffix else f"km_endpoint_{group_col}"
+    sel_endpoint = st.radio(
+        "Biological Endpoint & Stratification:",
+        endpoint_options,
+        index=0,
+        horizontal=True,
+        key=endpoint_k,
+        help="Switch between classic mortality kinetics, nutritional feeding persistence (time-to-anorexia), or stratifying survival by daily sucrose consumption levels."
+    )
+
+    if "Feeding Persistence" in sel_endpoint and 'feeding_cessation_duration' in valid_survival_df.columns:
+        T = valid_survival_df['feeding_cessation_duration'].values
+        E = valid_survival_df['feeding_cessation_event'].values
+        G = valid_survival_df[group_col].values
+        groups = [g for g in valid_survival_df[group_col].unique() if pd.notna(g) and str(g).strip() != '']
+        active_color_map = color_map or {}
+        y_axis_label = 'Feeding Probability Ŝ_feed(t)'
+        threshold_text = '50% Threshold (FT50)'
+        metric_label_name = 'Median Feeding (FT50)'
+        events_label_name = 'Ceased Feeding (Events)'
+        cens_label_name = 'Still Feeding (Active)'
+        st.info("🕒 **Nutritional Feeding Persistence Active**: Evaluating the probability of bees remaining active feeders over time. Event = permanent cessation of feeding ($C \\le 0$).")
+    elif "Stratified by Sucrose Intake" in sel_endpoint and has_cons_col:
+        med_intake = float(valid_survival_df['mean_consumption'].median())
+        valid_survival_df['intake_stratum'] = valid_survival_df['mean_consumption'].apply(
+            lambda v: f"High Feeders (≥ {med_intake:.1f} µL/d)" if v >= med_intake else f"Low Feeders (< {med_intake:.1f} µL/d)"
+        )
+        T = valid_survival_df['duration'].values
+        E = valid_survival_df['event'].values
+        G = valid_survival_df['intake_stratum'].values
+        groups = sorted(list(valid_survival_df['intake_stratum'].unique()), reverse=True)
+        active_color_map = {
+            f"High Feeders (≥ {med_intake:.1f} µL/d)": "#10b981",
+            f"Low Feeders (< {med_intake:.1f} µL/d)": "#ef4444"
+        }
+        y_axis_label = 'Survival Probability Ŝ(t)'
+        threshold_text = '50% Threshold (LT50)'
+        metric_label_name = 'Median Survival (LT50)'
+        events_label_name = 'Observed Deaths'
+        cens_label_name = 'Censored / Alive'
+        st.info(f"🍯 **Sucrose Intake Stratification Active**: Bees partitioned into High vs. Low Feeders around median daily intake ({med_intake:.1f} µL/bee/day). Evaluates if nutrition significantly prolongs bee lifespan.")
+    else:
+        T = valid_survival_df['duration'].values
+        E = valid_survival_df['event'].values
+        G = valid_survival_df[group_col].values
+        groups = [g for g in valid_survival_df[group_col].unique() if pd.notna(g) and str(g).strip() != '']
+        active_color_map = color_map or {}
+        y_axis_label = 'Survival Probability Ŝ(t)'
+        threshold_text = '50% Threshold (LT50)'
+        metric_label_name = 'Median Survival (LT50)'
+        events_label_name = 'Observed Deaths'
+        cens_label_name = 'Censored / Alive'
+
     if len(groups) == 0:
         st.warning("No valid cohort data available for Kaplan-Meier analysis.")
         return
-
-    T = valid_survival_df['duration'].values
-    E = valid_survival_df['event'].values
-    G = valid_survival_df[group_col].values
 
     total_events = int(np.sum(E))
 
@@ -130,16 +183,16 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
     with col_k1:
         st.markdown(f'<div class="kpi-card"><div class="kpi-val">{len(T)}</div><div class="kpi-label">Total Bees (N)</div></div>', unsafe_allow_html=True)
     with col_k2:
-        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{total_events}</div><div class="kpi-label">Observed Deaths</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{total_events}</div><div class="kpi-label">{events_label_name}</div></div>', unsafe_allow_html=True)
     with col_k3:
         n_cens_all = len(T) - total_events
-        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{n_cens_all}</div><div class="kpi-label">Censored / Alive</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{n_cens_all}</div><div class="kpi-label">{cens_label_name}</div></div>', unsafe_allow_html=True)
     with col_k4:
         km_all = KaplanMeierFitter()
         km_all.fit(T, event_observed=E)
         med_all = km_all.median_survival_time_
         med_all_str = f"{int(round(med_all))}d" if (np.isfinite(med_all) and med_all > 0) else "> Max Obs"
-        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{med_all_str}</div><div class="kpi-label">Overall Median Survival</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{med_all_str}</div><div class="kpi-label">Overall {metric_label_name}</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -155,14 +208,14 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
         m = (G == g)
         sub_t = T[m]
         sub_e = E[m]
-        col = color_map.get(g, default_palette[idx_g % len(default_palette)]) if color_map else default_palette[idx_g % len(default_palette)]
+        col = active_color_map.get(g, default_palette[idx_g % len(default_palette)]) if active_color_map else default_palette[idx_g % len(default_palette)]
 
         n_total = len(sub_t)
         n_events = int(np.sum(sub_e))
         n_censored = n_total - n_events
-        mort_rate = (n_events / n_total * 100.0) if n_total > 0 else 0.0
+        event_rate = (n_events / n_total * 100.0) if n_total > 0 else 0.0
 
-        km_fitter.fit(sub_t, event_observed=sub_e, label=f"{g} (n={n_total}, dead={n_events})")
+        km_fitter.fit(sub_t, event_observed=sub_e, label=f"{g} (n={n_total}, events={n_events})")
         km_fitter.plot_survival_function(ax=ax_km, color=col, ci_show=True, ci_alpha=0.12, linewidth=2.2)
 
         cens_t = sub_t[sub_e == 0]
@@ -176,17 +229,29 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
         median_surv = km_fitter.median_survival_time_
         median_str = f"{int(round(median_surv))}d" if (np.isfinite(median_surv) and median_surv > 0) else "> Max Obs"
         cohort_summary.append({
-            "Cohort": g,
+            "Cohort / Stratum": g,
             "Sample Size (N)": n_total,
-            "Deaths (Events)": n_events,
-            "Censored": n_censored,
-            "Mortality Rate (%)": f"{mort_rate:.1f}%",
-            "Median Survival (LT50)": median_str
+            events_label_name: n_events,
+            cens_label_name: n_censored,
+            "Event Rate (%)": f"{event_rate:.1f}%",
+            metric_label_name: median_str
         })
 
-    ax_km.axhline(0.5, color='#475569', linestyle=':', linewidth=1.3, label='50% Threshold (LT50)')
+    # If stratified by intake or multiple groups with events, calculate Log-Rank test
+    if len(groups) > 1 and total_events > 0:
+        try:
+            from lifelines.statistics import multivariate_logrank_test
+            lr_res_km = multivariate_logrank_test(T, G, E)
+            p_val_km = lr_res_km.p_value
+            p_str_km = "p < 0.001" if p_val_km < 0.001 else f"p = {p_val_km:.4f}"
+            ax_km.text(0.04, 0.12, f"Log-Rank: {p_str_km}", transform=ax_km.transAxes,
+                       fontsize=10, fontweight='bold', bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.92))
+        except Exception:
+            pass
+
+    ax_km.axhline(0.5, color='#475569', linestyle=':', linewidth=1.3, label=threshold_text)
     ax_km.set_xlabel('Elapsed Observation Time (Days)', fontsize=12, fontweight='bold', labelpad=8)
-    ax_km.set_ylabel('Survival Probability Ŝ(t)', fontsize=12, fontweight='bold', labelpad=8)
+    ax_km.set_ylabel(y_axis_label, fontsize=12, fontweight='bold', labelpad=8)
     ax_km.set_ylim(-0.02, 1.05)
     max_plot_t = max(T) if len(T) > 0 else 8.0
     ax_km.set_xlim(left=0.8, right=max(max_plot_t + 0.5, 8.0))
@@ -204,7 +269,7 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
     st.download_button("📥 Download Kaplan-Meier Multi-Cohort Plot (PNG)", data=buf_km.getvalue(), file_name="kaplan_meier_survival_curves.png", mime="image/png", key=dl_km_key)
     plt.close(fig_km)
 
-    st.markdown("#### 👥 Cohort Survival Breakdown & LT50 Summary")
+    st.markdown(f"#### 👥 Cohort / Stratum Breakdown & {metric_label_name} Summary")
     st.dataframe(pd.DataFrame(cohort_summary), use_container_width=True)
 
     with st.expander("📋 Step-by-Step Kaplan–Meier Life Tables & Calculation Breakdown (Formula: Ŝ(t) = ∏ (1 - dᵢ/nᵢ))", expanded=True):
@@ -213,14 +278,15 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
         $$\\hat{S}(t) = \\prod_{t_i \\le t} \\left(1 - \\frac{d_i}{n_i}\\right)$$
         """)
 
-        lt_cohort_k = f"lt_cohort_sel_{group_col}_{key_suffix}" if key_suffix else f"lt_cohort_sel_{group_col}"
-        sel_lt_cohort = st.selectbox("Select Cohort to Inspect Step-by-Step Product-Limit Math:", groups, key=lt_cohort_k)
+        if groups:
+            lt_cohort_k = f"lt_cohort_sel_{group_col}_{key_suffix}" if key_suffix else f"lt_cohort_sel_{group_col}"
+            sel_lt_cohort = st.selectbox("Select Cohort to Inspect Step-by-Step Product-Limit Math:", groups, key=lt_cohort_k)
 
-        m_sel = (G == sel_lt_cohort)
-        t_sel = T[m_sel]
-        e_sel = E[m_sel]
+            m_sel = np.array([str(g) == str(sel_lt_cohort) for g in G])
+            t_sel = T[m_sel]
+            e_sel = E[m_sel]
 
-        life_tbl_df = compute_kaplan_meier_life_table(t_sel, e_sel)
+            life_tbl_df = compute_kaplan_meier_life_table(t_sel, e_sel)
         if not life_tbl_df.empty:
             st.dataframe(life_tbl_df, use_container_width=True)
 

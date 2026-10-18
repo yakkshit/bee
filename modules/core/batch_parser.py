@@ -12,13 +12,26 @@ from modules.core.time_parser import parse_time_data, filter_post_starvation_dat
 from modules.core.probit_engine import calculate_lt_percentiles
 
 
-def parse_batch_df(raw_df, abbott_c=0.0):
+def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
     """
     Parses a single batch DataFrame into mortality, survival, Probit regression,
     and individual bee time-to-event records.
     Strictly applies the Resurrected Bee observation correction rule and
     the post-2h starvation starting rule (excluding time zero / d0).
     """
+    if isinstance(abbott_c, str):
+        try:
+            abbott_c = float(abbott_c)
+        except ValueError:
+            if batch_name is None:
+                batch_name = abbott_c
+            abbott_c = 0.0
+    else:
+        try:
+            abbott_c = float(abbott_c)
+        except (ValueError, TypeError):
+            abbott_c = 0.0
+
     df_copy = raw_df.copy()
     df_copy.columns = [str(c).strip() for c in df_copy.columns]
 
@@ -195,16 +208,94 @@ def parse_batch_df(raw_df, abbott_c=0.0):
             if 'Treatment' in df_copy.columns and pd.notna(df_copy['Treatment'].iloc[0]):
                 treatment_val = str(df_copy['Treatment'].iloc[0]).strip()
 
+            # Feeding cessation endpoint: find when bee permanently stops eating (Cons <= 0)
+            if cons_vals and any(v > 0 for v in cons_vals):
+                pos_indices = [k for k, v in enumerate(cons_vals) if v > 0]
+                last_feed_idx = max(pos_indices)
+                if last_feed_idx < num_days - 1:
+                    cess_idx = min(last_feed_idx + 1, num_days - 1)
+                    dur_feed = float(batch_elapsed_days[cess_idx])
+                    ev_feed = 1
+                else:
+                    dur_feed = float(batch_elapsed_days[-1])
+                    ev_feed = 0
+            else:
+                dur_feed = float(batch_elapsed_days[0]) if len(batch_elapsed_days) > 0 else 1.0
+                ev_feed = 1 if final_state == 'D' else 0
+
             individual_bees.append({
                 'bee_id': bc,
                 'duration': max(dur, 0.5),
                 'event': ev,
                 'mean_consumption': mean_cons,
                 'total_consumption': total_cons,
+                'feeding_cessation_duration': max(dur_feed, 0.5),
+                'feeding_cessation_event': ev_feed,
                 'temp': temp_val if not np.isnan(temp_val) else 25.0,
                 'humidity': humid_val if not np.isnan(humid_val) else 60.0,
                 'treatment': treatment_val
             })
+
+    # Extract complete batch consumption matrix and daily progression
+    cons_matrix = []
+    cons_cols = []
+    if len(bee_cols) > 0:
+        for idx_b, bc in enumerate(bee_cols):
+            cons_candidates = [
+                bc.replace("Bee ", "Cons ") + " (µL)",
+                bc.replace("Bee ", "Cons ") + " (uL)",
+                bc.replace("Bee", "Cons"),
+                bc.replace("Bee ", "Cons "),
+                bc.replace("Bee_", "Cons_"),
+                bc.replace("bee", "cons")
+            ]
+            c_found = False
+            for candidate in cons_candidates:
+                matched = [c for c in df_copy.columns if candidate.lower() in str(c).lower()]
+                if matched:
+                    raw_c = pd.to_numeric(df_copy[matched[0]], errors='coerce').fillna(0.0).tolist()
+                    cons_matrix.append(raw_c)
+                    cons_cols.append(matched[0])
+                    c_found = True
+                    break
+            if not c_found:
+                cons_matrix.append([0.0] * num_days)
+                cons_cols.append(f"Cons {bc} (µL)")
+
+    has_consumption = any(any(v > 0 for v in b_c) for b_c in cons_matrix) if cons_matrix else False
+
+    daily_all_cons = []
+    daily_mean_cons = []
+    daily_sem_cons = []
+    daily_alive_mean_cons = []
+    daily_alive_sem_cons = []
+
+    for d_idx in range(num_days):
+        day_vals = [cons_matrix[b_idx][d_idx] for b_idx in range(len(cons_matrix))] if cons_matrix else []
+        daily_all_cons.append(day_vals)
+        if day_vals:
+            m_val = float(np.mean(day_vals))
+            sem_val = float(np.std(day_vals) / np.sqrt(len(day_vals))) if len(day_vals) > 1 else 0.0
+        else:
+            m_val, sem_val = 0.0, 0.0
+        daily_mean_cons.append(m_val)
+        daily_sem_cons.append(sem_val)
+
+        alive_indices = [b_idx for b_idx in range(len(cons_matrix)) if get_latest_state(states_matrix[b_idx], d_idx) != 'D'] if cons_matrix else []
+        if alive_indices:
+            alive_day_vals = [cons_matrix[b_idx][d_idx] for b_idx in alive_indices]
+            al_m = float(np.mean(alive_day_vals))
+            al_sem = float(np.std(alive_day_vals) / np.sqrt(len(alive_day_vals))) if len(alive_day_vals) > 1 else 0.0
+        else:
+            al_m, al_sem = 0.0, 0.0
+        daily_alive_mean_cons.append(al_m)
+        daily_alive_sem_cons.append(al_sem)
+
+    daily_mean_cons = np.array(daily_mean_cons)
+    daily_sem_cons = np.array(daily_sem_cons)
+    daily_alive_mean_cons = np.array(daily_alive_mean_cons)
+    daily_alive_sem_cons = np.array(daily_alive_sem_cons)
+    cumulative_mean_cons = np.cumsum(daily_mean_cons) if len(daily_mean_cons) > 0 else np.array([])
 
     # Calculate full default LT spectrum
     default_lt_records = calculate_lt_percentiles(
@@ -241,7 +332,16 @@ def parse_batch_df(raw_df, abbott_c=0.0):
         'lt90': lt90_elapsed,
         'lt_records': default_lt_records,
         'lt_dict': lt_map,
-        'individual_bees': pd.DataFrame(individual_bees)
+        'individual_bees': pd.DataFrame(individual_bees),
+        'cons_matrix': cons_matrix,
+        'cons_cols': cons_cols,
+        'daily_all_cons': daily_all_cons,
+        'daily_mean_cons': daily_mean_cons,
+        'daily_sem_cons': daily_sem_cons,
+        'daily_alive_mean_cons': daily_alive_mean_cons,
+        'daily_alive_sem_cons': daily_alive_sem_cons,
+        'cumulative_mean_cons': cumulative_mean_cons,
+        'has_consumption': has_consumption
     }
 
 

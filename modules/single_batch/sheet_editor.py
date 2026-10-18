@@ -12,7 +12,8 @@ import streamlit as st
 from modules.core.time_parser import filter_post_starvation_data, is_time_zero, DEFAULT_CSV
 from modules.parser import (
     standardize_observation_df,
-    clean_cohort_name
+    clean_cohort_name,
+    get_cohort_code
 )
 
 CACHE_FILE = ".cached_df.csv"
@@ -101,32 +102,39 @@ def generate_html_report(dataframe, metadata):
 
 def render_observation_sheet_editor():
     """Renders the data editor, file upload, add bee columns, and export buttons."""
+    if 'uploaded_file_dict' not in st.session_state:
+        st.session_state['uploaded_file_dict'] = {}
+    if 'user_uploaded_files' not in st.session_state:
+        st.session_state['user_uploaded_files'] = set()
+
+    # Clean out any non-user-uploaded datasets (e.g. previously auto-injected workspace files)
+    for k in list(st.session_state['uploaded_file_dict'].keys()):
+        if k not in st.session_state['user_uploaded_files']:
+            del st.session_state['uploaded_file_dict'][k]
+
     if 'df' not in st.session_state:
         if os.path.exists(CACHE_FILE):
             try:
-                st.session_state.df = pd.read_csv(CACHE_FILE)
+                st.session_state['df'] = pd.read_csv(CACHE_FILE)
             except Exception:
-                st.session_state.df = pd.read_csv(io.StringIO(DEFAULT_CSV))
+                st.session_state['df'] = pd.read_csv(io.StringIO(DEFAULT_CSV))
         else:
-            st.session_state.df = pd.read_csv(io.StringIO(DEFAULT_CSV))
+            st.session_state['df'] = pd.read_csv(io.StringIO(DEFAULT_CSV))
 
         # Filter out pre-starvation time zero if present
-        st.session_state.df = filter_post_starvation_data(st.session_state.df)
+        st.session_state['df'] = filter_post_starvation_data(st.session_state['df'])
 
-        bee_cols_init = [c for c in st.session_state.df.columns if str(c).lower().startswith('bee')]
+        bee_cols_init = [c for c in st.session_state['df'].columns if str(c).lower().startswith('bee')]
         for b in bee_cols_init:
             cons_col = b.replace("Bee ", "Cons ") + " (µL)"
-            if cons_col not in st.session_state.df.columns:
-                st.session_state.df.insert(st.session_state.df.columns.get_loc(b) + 1, cons_col, "0.0")
+            if cons_col not in st.session_state['df'].columns:
+                st.session_state['df'].insert(st.session_state['df'].columns.get_loc(b) + 1, cons_col, "0.0")
 
-        st.session_state.df = st.session_state.df.astype(str)
-        st.session_state.df.replace("nan", "", inplace=True)
+        st.session_state['df'] = st.session_state['df'].astype(str)
+        st.session_state['df'].replace("nan", "", inplace=True)
 
     st.write("### Daily Individual Observations")
     st.info("🕒 **Bioassay Protocol Active**: Starting observations are strictly post-2h starvation period (Time Zero / baseline d0 is excluded from kinetics and hazard models).")
-
-    if 'uploaded_file_dict' not in st.session_state:
-        st.session_state['uploaded_file_dict'] = {}
 
     uploaded_files = st.file_uploader(
         "Upload CSV Observation File(s) (Multiple files allowed)",
@@ -137,81 +145,104 @@ def render_observation_sheet_editor():
     )
 
     if uploaded_files:
-        files_updated = False
-        for f in uploaded_files:
-            if f.name not in st.session_state['uploaded_file_dict']:
+        upload_sig = tuple((f.name, f.size) for f in uploaded_files)
+        if upload_sig != st.session_state.get('tab1_upload_sig'):
+            st.session_state['tab1_upload_sig'] = upload_sig
+            last_uploaded_name = None
+            for f in uploaded_files:
                 try:
-                    raw_f_df = pd.read_csv(f, sep=None, engine='python')
+                    f.seek(0)
+                    try:
+                        raw_f_df = pd.read_csv(f, sep=None, engine='python')
+                    except Exception:
+                        f.seek(0)
+                        raw_f_df = pd.read_csv(f)
                     clean_f_df = standardize_observation_df(raw_f_df)
                     clean_f_df = clean_f_df.astype(str)
                     clean_f_df.replace("nan", "", inplace=True)
-                    norm_label = clean_cohort_name(f.name)
+                    norm_label = clean_cohort_name(f.name, clean_f_df)
+                    st.session_state['user_uploaded_files'].add(f.name)
                     st.session_state['uploaded_file_dict'][f.name] = (norm_label, clean_f_df)
-                    files_updated = True
+                    last_uploaded_name = f.name
                 except Exception as ex:
                     st.error(f"Error reading {f.name}: {ex}")
 
-        if files_updated:
-            # Set active sheet to the first uploaded file
-            first_key = list(st.session_state['uploaded_file_dict'].keys())[0]
-            st.session_state.df = st.session_state['uploaded_file_dict'][first_key][1].copy()
-            st.rerun()
+            if last_uploaded_name:
+                st.session_state['active_sheet_key'] = last_uploaded_name
+                st.session_state['df'] = st.session_state['uploaded_file_dict'][last_uploaded_name][1].copy()
+                st.session_state['editor_version'] = st.session_state.get('editor_version', 0) + 1
+                try:
+                    st.session_state['df'].to_csv(CACHE_FILE, index=False)
+                except Exception:
+                    pass
+                st.rerun()
+    elif 'tab1_upload_sig' in st.session_state:
+        del st.session_state['tab1_upload_sig']
 
-    # If multiple files are uploaded, display a selector to choose the active sheet in this table editor
-    if len(st.session_state.get('uploaded_file_dict', {})) > 1:
+    # If any files are in uploaded_file_dict, display selector to choose active sheet
+    if st.session_state.get('uploaded_file_dict'):
         f_keys = list(st.session_state['uploaded_file_dict'].keys())
+        cur_active = st.session_state.get('active_sheet_key', f_keys[0])
+        if cur_active not in f_keys:
+            cur_active = f_keys[0]
+
         active_f = st.selectbox(
-            "📂 Active Cohort Sheet to View / Edit in Table:",
+            "📂 Active Cohort Sheet to View / Edit in Table & Single-CSV Plots:",
             f_keys,
-            format_func=lambda k: f"{st.session_state['uploaded_file_dict'][k][0]} ({k})",
+            index=f_keys.index(cur_active),
+            format_func=lambda k: f"{st.session_state['uploaded_file_dict'][k][0]} [{get_cohort_code(st.session_state['uploaded_file_dict'][k][0])}] ({k})",
             key="tab1_active_sheet_selector"
         )
-        if active_f:
-            st.session_state.df = st.session_state['uploaded_file_dict'][active_f][1]
+        if active_f != st.session_state.get('active_sheet_key'):
+            st.session_state['active_sheet_key'] = active_f
+            st.session_state['df'] = st.session_state['uploaded_file_dict'][active_f][1].copy()
+            st.session_state['editor_version'] = st.session_state.get('editor_version', 0) + 1
+            st.session_state['df'].to_csv(CACHE_FILE, index=False)
+            st.rerun()
 
     col1, col2, col3 = st.columns([1.5, 1, 4])
     with col1:
         if st.button("➕ Add Bee Column"):
-            bee_cols = [c for c in st.session_state.df.columns if str(c).lower().startswith('bee')]
+            bee_cols = [c for c in st.session_state['df'].columns if str(c).lower().startswith('bee')]
             new_idx = len(bee_cols) + 1
             new_col_name = f"Bee {new_idx}"
             new_cons_name = f"Cons {new_idx} (µL)"
             try:
-                temp_idx = list(st.session_state.df.columns).index("Temp (°C)")
+                temp_idx = list(st.session_state['df'].columns).index("Temp (°C)")
             except ValueError:
-                temp_idx = len(st.session_state.df.columns)
-            st.session_state.df.insert(temp_idx, new_col_name, "A")
-            st.session_state.df.insert(temp_idx + 1, new_cons_name, "0.0")
+                temp_idx = len(st.session_state['df'].columns)
+            st.session_state['df'].insert(temp_idx, new_col_name, "A")
+            st.session_state['df'].insert(temp_idx + 1, new_cons_name, "0.0")
+            st.session_state['editor_version'] = st.session_state.get('editor_version', 0) + 1
             st.rerun()
     with col2:
         if st.button("🔄 Reset Data / Uploads"):
-            if 'df' in st.session_state:
-                del st.session_state['df']
-            if 'uploaded_file_dict' in st.session_state:
-                st.session_state['uploaded_file_dict'] = {}
-            if 'processed_batches' in st.session_state:
-                del st.session_state['processed_batches']
+            for k in ['df', 'uploaded_file_dict', 'user_uploaded_files', 'processed_batches', 'active_sheet_key', 'editor_version', 'tab1_upload_sig', 'tab2_upload_sig']:
+                if k in st.session_state:
+                    del st.session_state[k]
             if os.path.exists(CACHE_FILE):
                 os.remove(CACHE_FILE)
             st.rerun()
     with col3:
         st.markdown("You can edit the cells below. **To add a new Day (row)**, scroll to the bottom of the table and click the empty row.")
 
-    edited_df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
-    st.session_state.df = edited_df
+    # Dynamic editor key ensures table updates immediately upon dataset switch
+    editor_key = f"obs_editor_{st.session_state.get('active_sheet_key', 'default')}_{st.session_state.get('editor_version', 0)}"
+    edited_df = st.data_editor(st.session_state['df'], num_rows="dynamic", use_container_width=True, key=editor_key)
+    st.session_state['df'] = edited_df
     df = edited_df.copy()
 
     # Sync back to central uploaded file dictionary if an uploaded file is active
-    if 'uploaded_file_dict' in st.session_state and st.session_state['uploaded_file_dict']:
-        cur_active_key = locals().get('active_f') or list(st.session_state['uploaded_file_dict'].keys())[0]
-        if cur_active_key in st.session_state['uploaded_file_dict']:
-            cur_lbl = st.session_state['uploaded_file_dict'][cur_active_key][0]
-            st.session_state['uploaded_file_dict'][cur_active_key] = (cur_lbl, df)
+    active_key = st.session_state.get('active_sheet_key')
+    if active_key and active_key in st.session_state.get('uploaded_file_dict', {}):
+        cur_lbl = st.session_state['uploaded_file_dict'][active_key][0]
+        st.session_state['uploaded_file_dict'][active_key] = (cur_lbl, df)
 
-    try:
-        df.to_csv(CACHE_FILE, index=False)
-    except Exception:
-        pass
+    if not os.path.exists(CACHE_FILE):
+        try:
+            df.to_csv(CACHE_FILE, index=False)
+        except Exception:
+            pass
 
 
     st.markdown("---")

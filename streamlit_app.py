@@ -1,4 +1,10 @@
+import sys
 import streamlit as st
+
+# Automatically refresh local modules so code modifications take effect immediately
+for _m in list(sys.modules.keys()):
+    if _m == 'modules' or _m.startswith('modules.'):
+        del sys.modules[_m]
 
 from modules.styles import (
     inject_custom_styles,

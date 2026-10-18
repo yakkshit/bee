@@ -94,6 +94,21 @@ def extract_individual_bee_survival(df_in, batch_name="Batch", elapsed_days=None
         mean_cons = float(np.mean(alive_cons)) if len(alive_cons) > 0 else 0.0
         total_cons = float(np.sum(alive_cons)) if len(alive_cons) > 0 else 0.0
 
+        # Feeding cessation endpoint: find when bee permanently stops eating (Cons <= 0)
+        if cons_vals and any(v > 0 for v in cons_vals):
+            pos_indices = [k for k, v in enumerate(cons_vals) if v > 0]
+            last_feed_idx = max(pos_indices)
+            if last_feed_idx < num_days - 1:
+                cess_idx = min(last_feed_idx + 1, num_days - 1)
+                dur_feed = float(elapsed_days[cess_idx]) if cess_idx < len(elapsed_days) else float(elapsed_days[-1])
+                ev_feed = 1
+            else:
+                dur_feed = float(elapsed_days[-1]) if len(elapsed_days) > 0 else 1.0
+                ev_feed = 0
+        else:
+            dur_feed = float(elapsed_days[0]) if len(elapsed_days) > 0 else 1.0
+            ev_feed = 1 if final_state == 'D' else 0
+
         treatment_val = batch_name
         if 'Treatment' in df_copy.columns and pd.notna(df_copy['Treatment'].iloc[0]):
             treatment_val = str(df_copy['Treatment'].iloc[0]).strip()
@@ -106,6 +121,8 @@ def extract_individual_bee_survival(df_in, batch_name="Batch", elapsed_days=None
             'event': ev,
             'mean_consumption': mean_cons,
             'total_consumption': total_cons,
+            'feeding_cessation_duration': max(dur_feed, 0.5),
+            'feeding_cessation_event': ev_feed,
             'temp': temp_val if not np.isnan(temp_val) else 25.0,
             'humidity': humid_val if not np.isnan(humid_val) else 60.0,
         })
