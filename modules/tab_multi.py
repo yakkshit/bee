@@ -17,12 +17,16 @@ from modules.parser import (
     get_default_4_cohort_dataframes,
     standardize_observation_df,
     extract_individual_bee_survival,
+    extract_key_from_df,
+    get_dataset_key_or_filename,
     AGREED_COHORTS,
+    ALL_COHORT_OPTIONS,
     COHORT_CODE_NAMES,
     COHORT_PALETTE,
     COHORT_MARKERS,
     COHORT_SUCROSE_2UL,
-    COHORT_ACETONE_5PCT_2UL
+    COHORT_ACETONE_5PCT_2UL,
+    COHORT_BLINDED
 )
 from modules.survival_stats import (
     render_kaplan_meier_analysis,
@@ -96,7 +100,9 @@ def render_multi_batch_tab(settings=None):
                     b_clean = standardize_observation_df(b_raw)
                     b_clean = b_clean.astype(str)
                     b_clean.replace("nan", "", inplace=True)
-                    norm_name = clean_cohort_name(f.name, b_clean)
+                    key_val = extract_key_from_df(b_clean)
+                    ident_name = key_val if key_val else f.name
+                    norm_name = clean_cohort_name(ident_name, b_clean, fallback_to_blinded=True)
                     st.session_state['user_uploaded_files'].add(f.name)
                     st.session_state['uploaded_file_dict'][f.name] = (norm_name, b_clean)
                     new_batch_added = True
@@ -152,17 +158,33 @@ def render_multi_batch_tab(settings=None):
 
         LINE_STYLES = {"Solid": "-", "Dashed": "--", "Dotted": ":", "Dash-Dot": "-."}
 
-        with st.expander("🎨 Customize Cohort Colors, Shapes & Display Names", expanded=True):
-            st.markdown("Assign cohorts to the 4 agreed experimental groups, adjust display labels, colors, and markers:")
+        with st.expander("🎨 Customize Cohort Treatments, Colors, Markers & Legend Display", expanded=True):
+            st.markdown("Assign cohorts to experimental treatments (or maintain Blinded Mode), adjust display labels, colors, and markers:")
 
-            col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4 = st.columns(4)
+            col_ctrl_top1, col_ctrl_top2 = st.columns([2.5, 1.5])
+            with col_ctrl_top1:
+                legend_format = st.selectbox(
+                    "🏷️ Plot Legend Label Style (Global):",
+                    [
+                        "Key / File Name (Default / Blinded Study Mode)",
+                        "Treatment Solution (Short Code, e.g. 5% Acetone 2 µL)",
+                        "Treatment Solution (Full Protocol Name)",
+                        "Key / File Name + Treatment Solution",
+                        "Custom Display Labels (Specified Below)"
+                    ],
+                    index=0,
+                    key="multi_legend_format_pref",
+                    help="Switch how plot legends represent your datasets. If a Key column value is present, it will be used in legends; otherwise the file name is used. Once unblinded, switch to Treatment Solution or Key/File Name + Treatment."
+                )
+            with col_ctrl_top2:
+                legend_detail = st.selectbox("Probit Legend Detail", ["Label + Equation + R²", "Label + R² Only", "Label Only"], index=0)
+
+            col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
             with col_ctrl1:
                 jitter_val = st.slider("Point Separation / Anti-Overlap Offset", min_value=0.0, max_value=0.05, value=0.015, step=0.003, help="Offsets data points horizontally side-by-side so markers from different CSV files don't overlap directly on top of each other.")
             with col_ctrl2:
-                legend_detail = st.selectbox("Legend Detail Level", ["File Name + Equation + R²", "File Name + R² Only", "File Name Only"], index=0)
+                legend_loc_opt = st.selectbox("Legend Placement", ["Right (Outside)", "Top (Horizontal)", "Bottom (Horizontal)"], index=0)
             with col_ctrl3:
-                legend_loc_opt = st.selectbox("Legend Placement", ["Top (Horizontal)", "Bottom (Horizontal)", "Right (Outside)"], index=0)
-            with col_ctrl4:
                 show_grid = st.checkbox("Show Chart Gridlines", value=True)
 
             st.markdown("---")
@@ -173,22 +195,51 @@ def render_multi_batch_tab(settings=None):
             for idx, orig_name in enumerate(b_keys):
                 col_i = c_cols[idx % len(c_cols)]
                 with col_i:
-                    st.markdown(f"**Cohort {idx+1}:**")
+                    b_df = raw_batch_dict[orig_name]
+                    key_val = extract_key_from_df(b_df)
+                    key_or_file = key_val if key_val else orig_name
+
+                    if key_val:
+                        st.markdown(f"**Dataset {idx+1}: {orig_name}**  \n<span style='font-size:11px;color:#0f766e;'>🔑 Key: <b>{key_val}</b></span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"**Dataset {idx+1}: {orig_name}**")
+
                     if orig_name in uploaded_dict:
                         resolved_cohort = uploaded_dict[orig_name][0]
                     else:
-                        resolved_cohort = clean_cohort_name(orig_name)
+                        resolved_cohort = clean_cohort_name(key_or_file, df=b_df, fallback_to_blinded=True)
                     code_name = get_cohort_code(resolved_cohort)
 
                     # Show agreed code name badge
-                    st.markdown(f"<span style='background:#e0f2fe;color:#0369a1;padding:3px 9px;border-radius:12px;font-size:11.5px;font-weight:bold;'>🏷️ Code: {code_name}</span>", unsafe_allow_html=True)
+                    badge_color = "#f1f5f9" if code_name == "Blinded" else "#e0f2fe"
+                    badge_text_col = "#475569" if code_name == "Blinded" else "#0369a1"
+                    st.markdown(f"<span style='background:{badge_color};color:{badge_text_col};padding:3px 9px;border-radius:12px;font-size:11.5px;font-weight:bold;'>🏷️ Code: {code_name}</span>", unsafe_allow_html=True)
 
-                    cohort_options = AGREED_COHORTS + ["Custom / Other"]
-                    sel_cohort_idx = AGREED_COHORTS.index(resolved_cohort) if resolved_cohort in AGREED_COHORTS else len(AGREED_COHORTS)
-                    cohort_choice = st.selectbox("Agreed Protocol Name", cohort_options, index=sel_cohort_idx, key=f"bcohort_{idx}")
+                    cohort_options = ALL_COHORT_OPTIONS
+                    if resolved_cohort in cohort_options:
+                        sel_cohort_idx = cohort_options.index(resolved_cohort)
+                    elif resolved_cohort in AGREED_COHORTS:
+                        sel_cohort_idx = cohort_options.index(resolved_cohort)
+                    else:
+                        sel_cohort_idx = 0  # Default to None / Blinded (Unknown)
 
-                    default_label = orig_name
-                    custom_label = st.text_input("Display Label (File Name)", value=default_label, key=f"bname_{idx}")
+                    cohort_choice = st.selectbox("Treatment Solution", cohort_options, index=sel_cohort_idx, key=f"bcohort_{idx}")
+                    active_code = get_cohort_code(cohort_choice)
+
+                    # Auto-compute label based on selected legend format
+                    is_blinded = (cohort_choice == COHORT_BLINDED or cohort_choice == "None")
+                    if legend_format == "Key / File Name (Default / Blinded Study Mode)":
+                        auto_label = key_or_file
+                    elif legend_format == "Treatment Solution (Short Code, e.g. 5% Acetone 2 µL)":
+                        auto_label = active_code if not is_blinded else key_or_file
+                    elif legend_format == "Treatment Solution (Full Protocol Name)":
+                        auto_label = cohort_choice if not is_blinded else key_or_file
+                    elif legend_format == "Key / File Name + Treatment Solution":
+                        auto_label = f"{key_or_file} ({active_code})" if not is_blinded else key_or_file
+                    else:
+                        auto_label = key_or_file
+
+                    custom_label = st.text_input("Display Label (Plot Legend)", value=auto_label, key=f"bname_{idx}_{legend_format}")
 
                     default_c = COHORT_PALETTE.get(cohort_choice, DEFAULT_COLORS[idx % len(DEFAULT_COLORS)])
                     custom_color = st.color_picker("Color", default_c, key=f"bcol_{idx}")
@@ -207,7 +258,7 @@ def render_multi_batch_tab(settings=None):
                         'filename': orig_name,
                         'name': custom_label,
                         'cohort_name': cohort_choice,
-                        'code_name': get_cohort_code(cohort_choice),
+                        'code_name': active_code,
                         'color': custom_color,
                         'marker': custom_shape,
                         'marker_name': custom_shape_name,
@@ -263,7 +314,7 @@ def render_multi_batch_tab(settings=None):
 
         # 1. Probit Regression CSV File Comparison Plot
         st.subheader("1. Probit Regression Time-Mortality Comparison Across CSV Files")
-        fig_p_multi, ax_p = plt.subplots(figsize=(10.5, 6.0), dpi=300)
+        fig_p_multi, ax_p = plt.subplots(figsize=(10.5, 6.0), dpi=140)
 
         if show_grid:
             ax_p.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
@@ -291,16 +342,18 @@ def render_multi_batch_tab(settings=None):
             )
 
             if len(b['log_time']) > 1:
-                y_fit_line = b['intercept_a'] + b['slope_b'] * x_fit_line
-                ax_p.plot(
-                    x_fit_line, y_fit_line,
-                    color=b['color'], linestyle=b['linestyle'], linewidth=line_width,
-                    zorder=3
-                )
+                y_raw = b['intercept_a'] + b['slope_b'] * x_fit_line
+                valid_mask = (y_raw >= 2.5) & (y_raw <= 9.2)
+                if np.any(valid_mask):
+                    ax_p.plot(
+                        x_fit_line[valid_mask], y_raw[valid_mask],
+                        color=b['color'], linestyle=b['linestyle'], linewidth=line_width,
+                        zorder=3
+                    )
 
-            if legend_detail == "File Name + Equation + R²":
+            if "Equation + R²" in legend_detail:
                 lbl = f"{b['name']} (Y={b['intercept_a']:.2f}+{b['slope_b']:.2f}x, R²={b['r_squared']:.4f})"
-            elif legend_detail == "File Name + R² Only":
+            elif "R² Only" in legend_detail:
                 lbl = f"{b['name']} (R²={b['r_squared']:.4f})"
             else:
                 lbl = b['name']
@@ -371,7 +424,7 @@ def render_multi_batch_tab(settings=None):
         # 2. Mortality % Comparison
         with cols_m[0]:
             st.subheader("2. Mortality Curve Comparison")
-            fig_m_multi, ax_m = plt.subplots(figsize=(7.5, 5.2), dpi=300)
+            fig_m_multi, ax_m = plt.subplots(figsize=(7.5, 5.2), dpi=140)
             if show_grid:
                 ax_m.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
@@ -399,12 +452,17 @@ def render_multi_batch_tab(settings=None):
             ax_m.spines['top'].set_visible(False)
             ax_m.spines['right'].set_visible(False)
 
-            if legend_loc_opt == "Right (Outside)":
-                ax_m.legend(handles=m_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
-                fig_m_multi.tight_layout(rect=[0, 0, 0.72, 1.0])
-            else:
-                ax_m.legend(handles=m_handles, loc='upper left', frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+            if legend_loc_opt == "Top (Horizontal)":
+                ax_m.legend(handles=m_handles, loc='lower center', bbox_to_anchor=(0.5, 1.02),
+                            ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
                 fig_m_multi.tight_layout()
+            elif legend_loc_opt == "Bottom (Horizontal)":
+                ax_m.legend(handles=m_handles, loc='upper center', bbox_to_anchor=(0.5, -0.18),
+                            ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_m_multi.tight_layout()
+            else:
+                ax_m.legend(handles=m_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_m_multi.tight_layout(rect=[0, 0, 0.75, 1.0])
 
             st.pyplot(fig_m_multi)
 
@@ -418,7 +476,7 @@ def render_multi_batch_tab(settings=None):
         with cols_m[1]:
             st.subheader("3. Survival Curve Comparison")
             st.caption("Observed survival percentage across observation days. For formal non-parametric Kaplan–Meier step curves with censoring, Greenwood CI, Log-Rank tests, and Cox regression, see Section 5 below.")
-            fig_s_multi, ax_s = plt.subplots(figsize=(7.5, 5.2), dpi=300)
+            fig_s_multi, ax_s = plt.subplots(figsize=(8.0, 5.2), dpi=140)
             if show_grid:
                 ax_s.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
@@ -446,12 +504,17 @@ def render_multi_batch_tab(settings=None):
             ax_s.spines['top'].set_visible(False)
             ax_s.spines['right'].set_visible(False)
 
-            if legend_loc_opt == "Right (Outside)":
-                ax_s.legend(handles=s_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
-                fig_s_multi.tight_layout(rect=[0, 0, 0.72, 1.0])
-            else:
-                ax_s.legend(handles=s_handles, loc='upper left', frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+            if legend_loc_opt == "Top (Horizontal)":
+                ax_s.legend(handles=s_handles, loc='lower center', bbox_to_anchor=(0.5, 1.02),
+                            ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
                 fig_s_multi.tight_layout()
+            elif legend_loc_opt == "Bottom (Horizontal)":
+                ax_s.legend(handles=s_handles, loc='upper center', bbox_to_anchor=(0.5, -0.18),
+                            ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_s_multi.tight_layout()
+            else:
+                ax_s.legend(handles=s_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_s_multi.tight_layout(rect=[0, 0, 0.75, 1.0])
 
             st.pyplot(fig_s_multi)
 
@@ -518,7 +581,7 @@ def render_multi_batch_tab(settings=None):
                 val = np.nan
             b_chosen_lt_vals.append(val)
 
-        fig_lt, ax_lt = plt.subplots(figsize=(8.0, 4.8), dpi=300)
+        fig_lt, ax_lt = plt.subplots(figsize=(8.0, 4.8), dpi=140)
         if show_grid:
             ax_lt.grid(True, linestyle='--', alpha=0.35, color='#cccccc', axis='y', zorder=1)
 
@@ -587,6 +650,7 @@ def render_multi_batch_tab(settings=None):
             summary_rows.append(row_data)
 
         summary_df = pd.DataFrame(summary_rows)
+        st.session_state['multi_summary_df'] = summary_df
         st.dataframe(summary_df, use_container_width=True)
 
         c_csv, c_zip_top = st.columns(2)
@@ -607,8 +671,8 @@ def render_multi_batch_tab(settings=None):
 
         # 6. Combined Kaplan-Meier Survival Analysis, Log-Rank Test & Cox Regression Across Batches
         st.markdown("---")
-        st.subheader("6. Combined Kaplan-Meier Survival Analysis, Log-Rank Test & Cox Regression")
-        st.caption("Comprehensive inferential survival framework: non-parametric Kaplan–Meier product-limit curves with step-by-step life tables, Mantel-Cox Log-Rank significance testing, and Cox Proportional Hazards regression.")
+        st.subheader("🔬 6. Combined Kaplan-Meier Survival Analysis, Log-Rank Test & Cox Regression Across Cohorts")
+        st.caption("Comprehensive inferential survival framework: non-parametric Kaplan–Meier product-limit curves with step-by-step life tables, Mantel-Cox Log-Rank significance testing, and Cox Proportional Hazards regression. (Full suite also available in Tab 3).")
         all_cohort_bees = []
         c_map = {}
         for b in processed_batches:
@@ -665,6 +729,7 @@ def render_multi_batch_tab(settings=None):
 
         # Bottom Unified ZIP Downloader packaging all plots across all sections
         if multi_plot_images:
+            st.session_state['multi_plot_images'] = multi_plot_images
             st.markdown("---")
             zip_multi_buf_bottom = io.BytesIO()
             with zipfile.ZipFile(zip_multi_buf_bottom, "w", zipfile.ZIP_DEFLATED) as zf:

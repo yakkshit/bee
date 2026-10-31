@@ -109,6 +109,7 @@ def render_single_batch_tab(settings=None):
 
     # 5. ZIP Packaging (Top and Bottom Download Triggers)
     if plot_images_dict:
+        st.session_state['single_plot_images'] = plot_images_dict
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for fname, data in plot_images_dict.items():

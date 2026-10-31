@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 
 from modules.parser import (
     extract_individual_bee_survival,
-    get_cohort_code
+    get_cohort_code,
+    extract_key_from_df
 )
 from modules.survival.kaplan_meier import render_kaplan_meier_analysis
 from modules.survival.log_rank import render_log_rank_analysis
@@ -58,7 +59,7 @@ def render_single_biostats_view(computed, df, settings=None, image_collector=Non
         if len(log_time) > 1:
             with c_s1:
                 st.subheader("Probit Regression (Time-Mortality)")
-                fig_probit, ax_probit = plt.subplots(figsize=(7.0, 5.2), dpi=300)
+                fig_probit, ax_probit = plt.subplots(figsize=(7.0, 5.2), dpi=140)
                 ax_probit.scatter(log_time, probit_y, color=primary_color, s=marker_size**2 * 1.5, edgecolors='black')
                 x_line = np.linspace(min(log_time), max(log_time), 100)
                 y_line = probit_a + probit_b * x_line
@@ -101,7 +102,8 @@ def render_single_biostats_view(computed, df, settings=None, image_collector=Non
                 st.caption(f"📊 Multi-treatment sheet detected: plotting `{', '.join(treatment_vals)}`.")
                 render_kaplan_meier_analysis(single_bees_df, group_col='treatment', key_suffix="single_km_tr")
             else:
-                t_curr = treatment_vals[0] if treatment_vals else "Single Batch"
+                key_or_name = extract_key_from_df(df) or st.session_state.get('active_sheet_key', 'Single Batch')
+                t_curr = treatment_vals[0] if treatment_vals else key_or_name
                 single_bees_df['cohort'] = t_curr
                 single_bees_df['cohort_code'] = get_cohort_code(t_curr)
                 color_map = {t_curr: primary_color}
@@ -125,7 +127,8 @@ def render_single_biostats_view(computed, df, settings=None, image_collector=Non
                 st.caption(f"📊 Multi-treatment sheet detected: comparing `{', '.join(treatment_vals)}`.")
                 render_log_rank_analysis(single_bees_df, group_col='treatment', key_suffix="single_tr")
             else:
-                t_curr = treatment_vals[0] if treatment_vals else "Single Batch"
+                key_or_name = extract_key_from_df(df) or st.session_state.get('active_sheet_key', 'Single Batch')
+                t_curr = treatment_vals[0] if treatment_vals else key_or_name
                 single_bees_df['cohort'] = t_curr
                 single_bees_df['cohort_code'] = get_cohort_code(t_curr)
                 color_map = {t_curr: primary_color}
@@ -149,7 +152,8 @@ def render_single_biostats_view(computed, df, settings=None, image_collector=Non
                 st.caption(f"📊 Multi-treatment sheet detected: quantifying hazard ratios across `{', '.join(treatment_vals)}`.")
                 render_cox_regression_analysis(single_bees_df, group_col='treatment', key_suffix="single_cox_multi_tr")
             else:
-                t_curr = treatment_vals[0] if treatment_vals else "Single Batch"
+                key_or_name = extract_key_from_df(df) or st.session_state.get('active_sheet_key', 'Single Batch')
+                t_curr = treatment_vals[0] if treatment_vals else key_or_name
                 single_bees_df['cohort'] = t_curr
                 single_bees_df['cohort_code'] = get_cohort_code(t_curr)
                 render_cox_regression_analysis(single_bees_df, group_col='cohort', key_suffix="single_cox")

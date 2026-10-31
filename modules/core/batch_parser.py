@@ -4,14 +4,127 @@ Processes single and multi-batch CSV tables, applying Abbott's formula,
 individual bee tracking, and Probit linear regression.
 Enforces Post-2h Starvation Rule (Excluding d0 / Time Zero).
 """
+import re
 import numpy as np
 import pandas as pd
 from scipy.stats import norm, linregress
 
 from modules.core.time_parser import parse_time_data, filter_post_starvation_data, is_time_zero
 from modules.core.probit_engine import calculate_lt_percentiles
+from modules.core.cohort_manager import extract_key_from_df
+
+IGNORED_METADATA_COLUMNS = {
+    'starttime', 'weather', 'beetype', 'bee_type', 'hive/colonyid', 'hive_colonyid',
+    'outdoorhumidity', 'outdoor_humidity', 'outsidetemp', 'outside_temp', 'key',
+    'temptreatment', 'observations/notes', 'observations', 'notes', 'date/time', 'day'
+}
 
 
+def is_bee_col(c) -> bool:
+    """
+    Checks if a column is an individual bee observation column (e.g. 'Bee 1', 'Bee 14').
+    Strictly ignores non-observation metadata columns such as 'BeeType', 'bee_id', 'StartTime', etc.
+    """
+    s = str(c).strip()
+    s_low = s.lower()
+    if s_low in ['beetype', 'bee_type', 'bee_id', 'bee id', 'starttime', 'weather',
+                'hive/colonyid', 'hive_colonyid', 'outdoorhumidity', 'outsidetemp',
+                'key', 'temptreatment', 'observations/notes', 'day', 'date/time']:
+        return False
+    # Matches Bee 1, Bee 2, Bee 14, Bee_1, Bee1
+    return bool(re.match(r'^bee[\s_#]*\d+$', s, re.IGNORECASE))
+
+
+def get_bee_columns(df) -> list:
+    """Returns list of genuine individual bee observation columns from DataFrame."""
+    if df is None:
+        return []
+    return [c for c in df.columns if is_bee_col(c)]
+
+
+def get_incubator_temp_col(columns) -> str:
+    """
+    Finds incubator temperature column, strictly ignoring outdoor/outside temperature and treatment labels.
+    """
+    cols = list(columns)
+    for c in cols:
+        cl = str(c).strip().lower()
+        if any(ign in cl for ign in ['outside', 'outdoor', 'treatment']):
+            continue
+        if cl in ['temp (°c)', 'temp(°c)', 'temp', 'temperature', 'incubator temp', 'incubator_temp']:
+            return c
+    for c in cols:
+        cl = str(c).strip().lower()
+        if any(ign in cl for ign in ['outside', 'outdoor', 'treatment']):
+            continue
+        if 'temp' in cl:
+            return c
+    return None
+
+
+def get_incubator_humidity_col(columns) -> str:
+    """
+    Finds incubator humidity column, strictly ignoring outdoor/outside humidity.
+    """
+    cols = list(columns)
+    for c in cols:
+        cl = str(c).strip().lower()
+        if any(ign in cl for ign in ['outside', 'outdoor']):
+            continue
+        if cl in ['humidity', 'humidity (%)', 'humidity(%)', 'humid']:
+            return c
+    for c in cols:
+        cl = str(c).strip().lower()
+        if any(ign in cl for ign in ['outside', 'outdoor']):
+            continue
+        if 'humid' in cl:
+            return c
+    return None
+
+
+def find_matching_cons_col(df_columns, bee_col_name: str) -> str:
+    """
+    Finds exact consumption column for a given bee (e.g. 'Cons 1 (µL)' for 'Bee 1').
+    Guarantees that cumulative/total consumption columns like 'TCons 1 (µL)' are not mistakenly matched.
+    """
+    match = re.search(r'\d+', bee_col_name)
+    b_num = match.group(0) if match else ""
+
+    candidates = [
+        f"Cons {b_num} (µL)",
+        f"Cons {b_num} (uL)",
+        f"Cons {b_num}",
+        f"Cons_{b_num}",
+        bee_col_name.replace("Bee ", "Cons ") + " (µL)",
+        bee_col_name.replace("Bee ", "Cons ") + " (uL)",
+        bee_col_name.replace("Bee", "Cons")
+    ]
+    # 1. Exact case-insensitive match
+    for cand in candidates:
+        for c in df_columns:
+            if cand.lower() == str(c).strip().lower():
+                return c
+
+    # 2. Substring match, strictly avoiding 'tcons' or 'total'
+    for cand in candidates:
+        for c in df_columns:
+            c_str = str(c).strip()
+            c_low = c_str.lower()
+            if c_low.startswith(('tcons', 'total', 'tot_')):
+                continue
+            if cand.lower() in c_low:
+                return c
+    return None
+
+try:
+    import streamlit as st
+    cache_data_fn = st.cache_data
+except Exception:
+    def cache_data_fn(func):
+        return func
+
+
+@cache_data_fn
 def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
     """
     Parses a single batch DataFrame into mortality, survival, Probit regression,
@@ -70,7 +183,7 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
 
     mort_col = next((c for c in df_copy.columns if 'mortality' in c.lower() or 'dead' in c.lower()), None)
 
-    if mort_col and not any(str(c).lower().startswith('bee') for c in df_copy.columns):
+    if mort_col and not any(is_bee_col(c) for c in df_copy.columns):
         raw_vals = pd.to_numeric(df_copy[mort_col], errors='coerce').fillna(0).values
         if len(raw_vals) > 0 and max(raw_vals) <= 1.0:
             mortality_pct = raw_vals * 100.0
@@ -84,7 +197,7 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
         times_numeric = batch_elapsed_days
         bee_cols = []
     else:
-        bee_cols = [c for c in df_copy.columns if str(c).lower().startswith('bee')]
+        bee_cols = get_bee_columns(df_copy)
         num_bees = len(bee_cols) if len(bee_cols) > 0 else 10
         times_numeric = batch_elapsed_days
 
@@ -153,23 +266,40 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
         lt50_elapsed = np.nan
         lt90_elapsed = np.nan
 
+    # Incubator environmental conditions (strictly excluding outdoor/outside columns)
+    incubator_temp_col = get_incubator_temp_col(df_copy.columns)
+    incubator_humid_col = get_incubator_humidity_col(df_copy.columns)
+    temp_val = np.nan
+    humid_val = np.nan
+    if incubator_temp_col:
+        try:
+            temp_val = float(pd.to_numeric(df_copy[incubator_temp_col], errors='coerce').mean())
+        except Exception:
+            pass
+    if incubator_humid_col:
+        try:
+            humid_val = float(pd.to_numeric(df_copy[incubator_humid_col], errors='coerce').mean())
+        except Exception:
+            pass
+
+    key_from_df = extract_key_from_df(df_copy)
+    default_treat = key_from_df if key_from_df else "Batch"
+    treatment_val = default_treat
+    if 'Treatment' in df_copy.columns and pd.notna(df_copy['Treatment'].iloc[0]):
+        t_cand = str(df_copy['Treatment'].iloc[0]).strip()
+        if t_cand and t_cand.lower() not in ['nan', 'none', '']:
+            treatment_val = t_cand
+
     individual_bees = []
     if len(bee_cols) > 0:
         for idx_b, bc in enumerate(bee_cols):
             b_states = states_matrix[idx_b]
             final_state = get_latest_state(b_states, num_days - 1)
 
-            cons_candidates = [
-                bc.replace("Bee ", "Cons ") + " (µL)",
-                bc.replace("Bee ", "Cons ") + " (uL)",
-                bc.replace("Bee", "Cons")
-            ]
+            c_matched = find_matching_cons_col(df_copy.columns, bc)
             cons_vals = []
-            for candidate in cons_candidates:
-                matched = [c for c in df_copy.columns if candidate.lower() in str(c).lower()]
-                if matched:
-                    cons_vals = pd.to_numeric(df_copy[matched[0]], errors='coerce').fillna(0.0).tolist()
-                    break
+            if c_matched:
+                cons_vals = pd.to_numeric(df_copy[c_matched], errors='coerce').fillna(0.0).tolist()
 
             if final_state == 'D':
                 d_star = num_days - 1
@@ -188,25 +318,6 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
 
             mean_cons = float(np.mean(alive_cons)) if len(alive_cons) > 0 else 0.0
             total_cons = float(np.sum(alive_cons)) if len(alive_cons) > 0 else 0.0
-
-            temp_val = np.nan
-            humid_val = np.nan
-            for c in df_copy.columns:
-                cl = str(c).lower()
-                if 'temp' in cl:
-                    try:
-                        temp_val = float(pd.to_numeric(df_copy[c], errors='coerce').mean())
-                    except Exception:
-                        pass
-                elif 'humid' in cl:
-                    try:
-                        humid_val = float(pd.to_numeric(df_copy[c], errors='coerce').mean())
-                    except Exception:
-                        pass
-
-            treatment_val = "Batch"
-            if 'Treatment' in df_copy.columns and pd.notna(df_copy['Treatment'].iloc[0]):
-                treatment_val = str(df_copy['Treatment'].iloc[0]).strip()
 
             # Feeding cessation endpoint: find when bee permanently stops eating (Cons <= 0)
             if cons_vals and any(v > 0 for v in cons_vals):
@@ -241,24 +352,12 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
     cons_cols = []
     if len(bee_cols) > 0:
         for idx_b, bc in enumerate(bee_cols):
-            cons_candidates = [
-                bc.replace("Bee ", "Cons ") + " (µL)",
-                bc.replace("Bee ", "Cons ") + " (uL)",
-                bc.replace("Bee", "Cons"),
-                bc.replace("Bee ", "Cons "),
-                bc.replace("Bee_", "Cons_"),
-                bc.replace("bee", "cons")
-            ]
-            c_found = False
-            for candidate in cons_candidates:
-                matched = [c for c in df_copy.columns if candidate.lower() in str(c).lower()]
-                if matched:
-                    raw_c = pd.to_numeric(df_copy[matched[0]], errors='coerce').fillna(0.0).tolist()
-                    cons_matrix.append(raw_c)
-                    cons_cols.append(matched[0])
-                    c_found = True
-                    break
-            if not c_found:
+            c_matched = find_matching_cons_col(df_copy.columns, bc)
+            if c_matched:
+                raw_c = pd.to_numeric(df_copy[c_matched], errors='coerce').fillna(0.0).tolist()
+                cons_matrix.append(raw_c)
+                cons_cols.append(c_matched)
+            else:
                 cons_matrix.append([0.0] * num_days)
                 cons_cols.append(f"Cons {bc} (µL)")
 
@@ -379,14 +478,15 @@ def standardize_observation_df(raw_df, default_treatment="sucrose solution 2 mic
         if 'Date/time' not in df_copy.columns:
             df_copy.insert(1, 'Date/time', '')
 
-        bee_cols = [c for c in df_copy.columns if str(c).lower().startswith('bee')]
+        bee_cols = get_bee_columns(df_copy)
         for b in bee_cols:
             cons_col = b.replace("Bee ", "Cons ") + " (µL)"
             if cons_col not in df_copy.columns:
                 df_copy.insert(df_copy.columns.get_loc(b) + 1, cons_col, "0.0")
 
         if 'Treatment' not in df_copy.columns:
-            df_copy['Treatment'] = default_treatment or 'sucrose solution 2 microliter'
+            k_treat = extract_key_from_df(df_copy)
+            df_copy['Treatment'] = k_treat if k_treat else (default_treatment or 'sucrose solution 2 microliter')
         if 'Observations/notes' not in df_copy.columns:
             df_copy['Observations/notes'] = ''
 

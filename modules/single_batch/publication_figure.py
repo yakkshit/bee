@@ -115,7 +115,7 @@ def render_single_publication_figure(computed, settings=None, image_collector=No
         ax_c.set_xticklabels(day_labels, rotation=45, ha="right")
         ax_c.spines['top'].set_visible(False)
         ax_c.spines['right'].set_visible(False)
-        ax_c.legend(loc='lower left', frameon=False, fontsize=9.5)
+        ax_c.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.92, edgecolor='#cbd5e1', fontsize=8.5)
         ax_c.text(-0.14, 1.04, 'C', transform=ax_c.transAxes, fontsize=15, fontweight='bold')
 
         # Panel D: Environment

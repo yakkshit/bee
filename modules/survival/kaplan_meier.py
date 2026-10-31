@@ -197,7 +197,7 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Render Plot 1: Kaplan-Meier Survival Curves
-    fig_km, ax_km = plt.subplots(figsize=(9.2, 5.5), dpi=300)
+    fig_km, ax_km = plt.subplots(figsize=(10.2, 5.6), dpi=140)
     ax_km.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
     km_fitter = KaplanMeierFitter()
@@ -244,8 +244,8 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
             lr_res_km = multivariate_logrank_test(T, G, E)
             p_val_km = lr_res_km.p_value
             p_str_km = "p < 0.001" if p_val_km < 0.001 else f"p = {p_val_km:.4f}"
-            ax_km.text(0.04, 0.12, f"Log-Rank: {p_str_km}", transform=ax_km.transAxes,
-                       fontsize=10, fontweight='bold', bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.92))
+            ax_km.text(0.03, 0.06, f"Log-Rank: {p_str_km}", transform=ax_km.transAxes,
+                       fontsize=10.5, fontweight='bold', bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.95, boxstyle='round,pad=0.35'))
         except Exception:
             pass
 
@@ -258,7 +258,7 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
     ax_km.xaxis.set_major_locator(MultipleLocator(1))
     ax_km.spines['top'].set_visible(False)
     ax_km.spines['right'].set_visible(False)
-    ax_km.legend(loc='lower left', frameon=True, facecolor='white', framealpha=0.92, fontsize=10)
+    ax_km.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', framealpha=0.95, edgecolor='#cbd5e1', fontsize=9.5)
     fig_km.tight_layout()
 
     st.pyplot(fig_km)

@@ -46,7 +46,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
     if num_days > 0 and num_bees > 0:
         with c_b1:
             st.subheader("Individual Bee Status Matrix Heatmap")
-            fig4, ax = plt.subplots(figsize=(8.0, 5.8), dpi=300)
+            fig4, ax = plt.subplots(figsize=(8.0, 5.8), dpi=140)
             state_num_map = {'A': 1, 'B': 2, 'D': 3}
             color_map_hm = {1: hm_alive_color, 2: hm_behavior_color, 3: hm_dead_color}
             mat = np.zeros((num_bees, num_days))
@@ -87,7 +87,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
         with c_b2:
             st.subheader("Population Status Breakdown")
             behavior_counts = [num_bees - a - d for a, d in zip(alive_counts, dead_counts)]
-            fig_area, ax_area = plt.subplots(figsize=(7.0, 5.2), dpi=300)
+            fig_area, ax_area = plt.subplots(figsize=(8.0, 5.2), dpi=140)
             ax_area.stackplot(elapsed_days, dead_counts, behavior_counts, alive_counts,
                               labels=['Dead', 'Behavior Change', 'Healthy / Alive'],
                               colors=[hm_dead_color, hm_behavior_color, hm_alive_color], alpha=0.85)
@@ -96,7 +96,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
             ax_area.set_xlim(-0.1, max_time * 1.05)
             ax_area.set_xticks(elapsed_days)
             ax_area.set_xticklabels(day_labels, rotation=45, ha='right')
-            ax_area.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='none', fontsize=9.5)
+            ax_area.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
             ax_area.spines['top'].set_visible(False)
             ax_area.spines['right'].set_visible(False)
             fig_area.tight_layout()
@@ -106,7 +106,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
 
         with c_b1:
             st.subheader("Daily Status Distribution")
-            fig_bar, ax_bar = plt.subplots(figsize=(7.0, 5.0), dpi=300)
+            fig_bar, ax_bar = plt.subplots(figsize=(8.0, 5.0), dpi=140)
             x_pos = np.arange(num_days)
             bar_w = 0.35
             ax_bar.bar(x_pos - bar_w / 2, alive_counts, bar_w, label='Alive', color=secondary_color)
@@ -115,7 +115,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
             ax_bar.set_ylabel('Bee Count', fontsize=12, fontweight='bold', labelpad=7)
             ax_bar.set_xticks(x_pos)
             ax_bar.set_xticklabels(day_labels, rotation=45, ha='right')
-            ax_bar.legend(loc='upper right', frameon=False, fontsize=9.5)
+            ax_bar.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
             ax_bar.spines['top'].set_visible(False)
             ax_bar.spines['right'].set_visible(False)
             fig_bar.tight_layout()
@@ -125,7 +125,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
 
         with c_b2:
             st.subheader("Cumulative Mortality Progression")
-            fig_cum, ax_cum = plt.subplots(figsize=(7.0, 5.0), dpi=300)
+            fig_cum, ax_cum = plt.subplots(figsize=(7.0, 5.0), dpi=140)
             ax_cum.plot(elapsed_days, dead_counts, marker='o', color=primary_color, linewidth=line_width, markersize=marker_size, label='Cumulative Mortality')
             ax_cum.set_xlabel('Observation Time / Days', fontsize=12, fontweight='bold', labelpad=7)
             ax_cum.set_ylabel('Cumulative Dead Bees', fontsize=12, fontweight='bold', labelpad=7)
@@ -215,7 +215,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
         # ---------------------------------------------
         with col_feed1:
             st.subheader("A. Individual Bee Sucrose Consumption Heatmap (µL)")
-            fig_hm_c, ax_hm_c = plt.subplots(figsize=(8.2, 5.8), dpi=300)
+            fig_hm_c, ax_hm_c = plt.subplots(figsize=(8.2, 5.8), dpi=140)
             mat_cons = np.array(cons_matrix)
             max_c_val = max(np.max(mat_cons) if mat_cons.size > 0 else 1.0, 1.0)
 
@@ -274,7 +274,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
             active_mean = daily_alive_mean_cons if use_alive else daily_mean_cons
             active_sem = daily_alive_sem_cons if use_alive else daily_sem_cons
 
-            fig_avg, ax_avg = plt.subplots(figsize=(8.2, 5.8), dpi=300)
+            fig_avg, ax_avg = plt.subplots(figsize=(8.2, 5.8), dpi=140)
             ax_avg.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
             x_idx = np.arange(num_days)
@@ -304,7 +304,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
             ax_avg.set_ylim(-0.5, max(np.max(active_mean) * 1.25 if len(active_mean) > 0 else 5.0, 5.0))
             ax_avg.spines['top'].set_visible(False)
             ax_avg.spines['right'].set_visible(False)
-            ax_avg.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.5)
+            ax_avg.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
             fig_avg.tight_layout()
             st.pyplot(fig_avg)
             record_cons_plot(fig_avg, '02_single_daily_average_consumption.png', 'fig_daily_average_consumption.png', 'Download Daily Average Intake Chart', 't3_avg')
@@ -317,7 +317,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
         # ---------------------------------------------
         with col_feed3:
             st.subheader("C. Individual Bee Cumulative Intake (µL)")
-            fig_cum_c, ax_cum_c = plt.subplots(figsize=(8.2, 5.6), dpi=300)
+            fig_cum_c, ax_cum_c = plt.subplots(figsize=(8.2, 5.6), dpi=140)
             ax_cum_c.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
             colors_bees = plt.cm.tab20(np.linspace(0, 1, max(1, num_bees)))
@@ -347,7 +347,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
         with col_feed4:
             st.subheader("D. Kaplan–Meier Feeding Persistence Curve")
             st.caption("Step-down non-parametric product-limit estimator for Feeding Cessation (Anorexia Endpoint). Event = Permanent cessation of sucrose feeding ($C \\le 0$).")
-            fig_km_f, ax_km_f = plt.subplots(figsize=(8.2, 5.6), dpi=300)
+            fig_km_f, ax_km_f = plt.subplots(figsize=(8.2, 5.6), dpi=140)
             ax_km_f.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
             if kmf_feeding and len(feeding_durations) > 0:
@@ -376,7 +376,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
             ax_km_f.set_xlim(0.8, max_time * 1.05)
             ax_km_f.spines['top'].set_visible(False)
             ax_km_f.spines['right'].set_visible(False)
-            ax_km_f.legend(loc='lower left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+            ax_km_f.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
             fig_km_f.tight_layout()
             st.pyplot(fig_km_f)
             record_cons_plot(fig_km_f, '04_single_feeding_cessation_kaplan_meier.png', 'fig_feeding_cessation_kaplan_meier.png', 'Download Feeding Cessation KM Curve', 't3_km_feed')
@@ -388,7 +388,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
         st.subheader("E. Sucrose Consumption vs. Survival Duration Correlation")
         st.caption("Examines whether individual daily sucrose intake correlates with life expectancy. Points represent individual bees.")
 
-        fig_corr, ax_corr = plt.subplots(figsize=(9.2, 5.0), dpi=300)
+        fig_corr, ax_corr = plt.subplots(figsize=(10.2, 5.2), dpi=140)
         ax_corr.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         valid_bees_idx = [i for i in range(len(mean_cons_per_bee)) if mean_cons_per_bee[i] > 0]
@@ -419,7 +419,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
             Line2D([0], [0], marker='o', color='w', markerfacecolor='#10b981', markeredgecolor='black', markersize=8, label='Alive / Censored'),
             Line2D([0], [0], color='#0f172a', lw=2, label=f'Trendline (R² = {cons_corr_r**2:.3f}, p = {cons_corr_p:.3f})')
         ]
-        ax_corr.legend(handles=legend_elems_corr, loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+        ax_corr.legend(handles=legend_elems_corr, bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
         fig_corr.tight_layout()
         st.pyplot(fig_corr)
         record_cons_plot(fig_corr, '05_single_consumption_survival_correlation.png', 'fig_consumption_survival_correlation.png', 'Download Consumption vs Survival Correlation', 't3_corr')

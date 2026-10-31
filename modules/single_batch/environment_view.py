@@ -34,7 +34,7 @@ def render_single_environment_view(computed, df, settings=None, image_collector=
     if any(temps):
         with c_e1:
             st.subheader("Environmental Conditions Timeline")
-            fig5, ax1 = plt.subplots(figsize=(7.0, 5.2), dpi=300)
+            fig5, ax1 = plt.subplots(figsize=(8.2, 5.2), dpi=140)
             x_days = elapsed_days
             color_temp = '#d95f02'
             ax1.set_xlabel('Observation Time / Days', fontsize=12, fontweight='bold', labelpad=7)
@@ -56,8 +56,9 @@ def render_single_environment_view(computed, df, settings=None, image_collector=
             ax1.set_xticklabels(day_labels, rotation=45, ha="right")
             ax1.spines['top'].set_visible(False)
             ax2.spines['top'].set_visible(False)
-            lines_e = l1 + l2
-            ax1.legend(lines_e, [l.get_label() for l in lines_e], loc='upper left', frameon=True, framealpha=0.9, facecolor='white', edgecolor='none', fontsize=9.5)
+            lines_e = (l1 if isinstance(l1, list) else [l1]) + (l2 if isinstance(l2, list) else [l2])
+            labels_e = [l.get_label() for l in lines_e]
+            ax1.legend(lines_e, labels_e, bbox_to_anchor=(1.12, 1.0), loc='upper left', frameon=True, framealpha=0.95, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
             fig5.tight_layout()
             st.pyplot(fig5)
             if image_collector:
@@ -65,7 +66,7 @@ def render_single_environment_view(computed, df, settings=None, image_collector=
 
         with c_e2:
             st.subheader("Temperature vs Humidity Scatter")
-            fig_scat, ax_scat = plt.subplots(figsize=(7.0, 5.2), dpi=300)
+            fig_scat, ax_scat = plt.subplots(figsize=(7.0, 5.2), dpi=140)
             ax_scat.scatter(temps, humidities, color=primary_color, s=marker_size**2 * 4, edgecolor='black', alpha=0.85)
             for i, txt in enumerate(day_labels):
                 ax_scat.annotate(txt, (temps[i], humidities[i]), fontsize=9, xytext=(5, 5), textcoords='offset points')
@@ -87,7 +88,7 @@ def render_single_environment_view(computed, df, settings=None, image_collector=
                 'Humidity': humidities
             }
             corr_df = pd.DataFrame(corr_data).corr()
-            fig_corr, ax_corr = plt.subplots(figsize=(6.2, 5.0), dpi=300)
+            fig_corr, ax_corr = plt.subplots(figsize=(6.2, 5.0), dpi=140)
             cax = ax_corr.matshow(corr_df, cmap='coolwarm', vmin=-1, vmax=1)
             fig_corr.colorbar(cax)
             ax_corr.set_xticks(range(len(corr_df.columns)))

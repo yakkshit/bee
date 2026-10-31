@@ -1,14 +1,54 @@
-.venv/
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+.venv/
+.venv*/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Streamlit & Web App Local State
+.streamlit/secrets.toml
+.cached_df.csv
 .matplotlib_cache/
 plots/
-*.png
-*.pdf
-*.csv
+
+# Operating System Files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Agent, Editor & IDE metadata
+.agents/
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Notes and temporary test outputs
+nots/
+test*.png
+test*.pdf
 *.HEIC
 *.bin
-*.pdf
+
+# Temporary plot outputs (keep sample data)
 *.png
+*.pdf
+!sample_data/*.png
+!sample_data/*.pdf
+
+# CSV files: ignore dynamic exports and caches, but preserve benchmark sample data
 *.csv
+!2026-30_export.csv

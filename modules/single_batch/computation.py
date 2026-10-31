@@ -11,8 +11,22 @@ from scipy.stats import norm, linregress
 from lifelines import KaplanMeierFitter
 
 from modules.parser import parse_time_data
+from modules.core.batch_parser import (
+    get_bee_columns,
+    get_incubator_temp_col,
+    get_incubator_humidity_col,
+    find_matching_cons_col
+)
+
+try:
+    import streamlit as st
+    cache_data_fn = st.cache_data
+except Exception:
+    def cache_data_fn(func):
+        return func
 
 
+@cache_data_fn
 def compute_single_batch_data(df, settings=None):
     """
     Parses raw dataframe observations and calculates mathematical models,
@@ -29,46 +43,30 @@ def compute_single_batch_data(df, settings=None):
     num_days = len(df)
     max_time = elapsed_days[-1] if len(elapsed_days) > 0 else 1.0
 
-    bee_cols = [c for c in df.columns if str(c).lower().startswith('bee')]
+    bee_cols = get_bee_columns(df)
     num_bees = len(bee_cols)
 
-    temps_raw = df['Temp (°C)'].tolist() if 'Temp (°C)' in df.columns else [0] * num_days
-    humidities_raw = df['Humidity'].tolist() if 'Humidity' in df.columns else [0] * num_days
+    temp_c = get_incubator_temp_col(df.columns)
+    humid_c = get_incubator_humidity_col(df.columns)
+    temps_raw = df[temp_c].tolist() if temp_c and temp_c in df.columns else [0] * num_days
+    humidities_raw = df[humid_c].tolist() if humid_c and humid_c in df.columns else [0] * num_days
     temps = [float(x) if str(x).replace('.', '', 1).isdigit() else 0.0 for x in temps_raw]
     humidities = [float(x) if str(x).replace('.', '', 1).isdigit() else 0.0 for x in humidities_raw]
-
-    cons_cols = [c for c in df.columns if str(c).startswith('Cons ') and '(µL)' in str(c)]
-    cons_matrix = []
-    for c in cons_cols:
-        raw_vals = df[c].tolist()
-        cons_matrix.append([float(x) if str(x).replace('.', '', 1).isdigit() else 0.0 for x in raw_vals])
 
     states_matrix = []
     for bc in bee_cols:
         states_matrix.append(df[bc].fillna("A").tolist())
 
-    # Map each bee to its exact consumption column
+    # Map each bee to its exact consumption column (avoiding cumulative TCons)
     cons_cols = []
     cons_matrix = []
     for bc in bee_cols:
-        cons_candidates = [
-            bc.replace("Bee ", "Cons ") + " (µL)",
-            bc.replace("Bee ", "Cons ") + " (uL)",
-            bc.replace("Bee", "Cons"),
-            bc.replace("Bee ", "Cons "),
-            bc.replace("Bee_", "Cons_"),
-            bc.replace("bee", "cons")
-        ]
-        c_found = False
-        for cand in cons_candidates:
-            matched = [c for c in df.columns if cand.lower() in str(c).lower()]
-            if matched:
-                raw_c = pd.to_numeric(df[matched[0]], errors='coerce').fillna(0.0).tolist()
-                cons_matrix.append(raw_c)
-                cons_cols.append(matched[0])
-                c_found = True
-                break
-        if not c_found:
+        c_matched = find_matching_cons_col(df.columns, bc)
+        if c_matched:
+            raw_c = pd.to_numeric(df[c_matched], errors='coerce').fillna(0.0).tolist()
+            cons_matrix.append(raw_c)
+            cons_cols.append(c_matched)
+        else:
             cons_matrix.append([0.0] * num_days)
             cons_cols.append(f"Cons {bc} (µL)")
 

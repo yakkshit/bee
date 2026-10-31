@@ -124,7 +124,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
     st.subheader("5.1 Daily Mean Sucrose Consumption Across All Observation Days")
     st.caption("Direct time-series comparison of daily sucrose consumption (µL/bee/day) across all cohorts, with shaded ± SEM uncertainty bands.")
 
-    fig_cons_lines, ax_cl = plt.subplots(figsize=(10.5, 6.0), dpi=300)
+    fig_cons_lines, ax_cl = plt.subplots(figsize=(10.5, 6.0), dpi=140)
     ax_cl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
     legend_handles_cons = []
@@ -197,7 +197,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
     st.subheader("5.2 Day-by-Day Grouped Bar Chart Comparison")
     st.caption("Granular day-by-day comparison of sucrose consumption: directly compares the average intake across all cohorts on each individual experimental day.")
 
-    fig_grouped_bars, ax_gb = plt.subplots(figsize=(11.5, 6.0), dpi=300)
+    fig_grouped_bars, ax_gb = plt.subplots(figsize=(12.0, 6.0), dpi=140)
     ax_gb.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
     total_bar_width = 0.82
@@ -241,7 +241,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
     ax_gb.set_ylim(0, None)
     ax_gb.spines['top'].set_visible(False)
     ax_gb.spines['right'].set_visible(False)
-    ax_gb.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.5)
+    ax_gb.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
     fig_grouped_bars.tight_layout()
     st.pyplot(fig_grouped_bars)
 
@@ -264,7 +264,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.3 Kaplan–Meier Feeding Persistence Curves")
         st.caption("Product-limit step curves for Feeding Cessation (Anorexia Endpoint). Event = Permanent cessation of sucrose feeding ($C \\le 0$).")
 
-        fig_km_multi_feed, ax_km_mf = plt.subplots(figsize=(8.0, 5.5), dpi=300)
+        fig_km_multi_feed, ax_km_mf = plt.subplots(figsize=(9.2, 5.5), dpi=140)
         ax_km_mf.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         kmf_feed_runner = KaplanMeierFitter()
@@ -326,10 +326,10 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
         if np.isfinite(lr_feed_p):
             p_text = f"p < 0.001" if lr_feed_p < 0.001 else f"p = {lr_feed_p:.4f}"
-            ax_km_mf.text(0.04, 0.12, f"Log-Rank (Feeding): {p_text}", transform=ax_km_mf.transAxes,
-                          fontsize=9.5, fontweight='bold', bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.9))
+            ax_km_mf.text(0.03, 0.06, f"Log-Rank (Feeding): {p_text}", transform=ax_km_mf.transAxes,
+                          fontsize=9.5, fontweight='bold', bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.95, boxstyle='round,pad=0.3'))
 
-        ax_km_mf.legend(loc='lower left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+        ax_km_mf.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
         fig_km_multi_feed.tight_layout()
         st.pyplot(fig_km_multi_feed)
 
@@ -348,7 +348,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.4 Cumulative Mean Sucrose Intake Over Days")
         st.caption("Cumulative average sucrose dose ingested per bee (µL) over the observation window across cohorts.")
 
-        fig_cum_intake, ax_ci = plt.subplots(figsize=(8.0, 5.5), dpi=300)
+        fig_cum_intake, ax_ci = plt.subplots(figsize=(9.2, 5.5), dpi=140)
         ax_ci.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         for b in batches_with_cons:
@@ -372,7 +372,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         ax_ci.set_ylim(0, None)
         ax_ci.spines['top'].set_visible(False)
         ax_ci.spines['right'].set_visible(False)
-        ax_ci.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+        ax_ci.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
         fig_cum_intake.tight_layout()
         st.pyplot(fig_cum_intake)
 
@@ -394,7 +394,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.5 Cohort × Day Sucrose Intake Heatmap Matrix")
         st.caption("2D Heatmap matrix of average daily sucrose consumption (µL/bee) across all cohorts and days.")
 
-        fig_heat_multi, ax_hm_m = plt.subplots(figsize=(8.2, 5.2), dpi=300)
+        fig_heat_multi, ax_hm_m = plt.subplots(figsize=(8.2, 5.2), dpi=140)
         cohort_labels_rev = [b.get('filename') or b.get('orig_name') or b.get('name', f"Cohort {i+1}") for i, b in enumerate(reversed(batches_with_cons))]
         heat_matrix = []
 
@@ -450,7 +450,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.6 Total Sucrose Intake vs. Survival Longevity")
         st.caption("Subject-level bioassay scatter: evaluates whether individual bee mortality was mediated by antifeedant starvation or direct chemical toxicity.")
 
-        fig_scatter_longev, ax_sl = plt.subplots(figsize=(8.2, 5.2), dpi=300)
+        fig_scatter_longev, ax_sl = plt.subplots(figsize=(9.2, 5.2), dpi=140)
         ax_sl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         all_tot_cons = []
@@ -493,7 +493,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         ax_sl.set_ylabel('Survival Duration (Days)', fontsize=11.5, fontweight='bold', labelpad=7)
         ax_sl.spines['top'].set_visible(False)
         ax_sl.spines['right'].set_visible(False)
-        ax_sl.legend(handles=scatter_legend_handles, loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+        ax_sl.legend(handles=scatter_legend_handles, bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
         fig_scatter_longev.tight_layout()
         st.pyplot(fig_scatter_longev)
 

@@ -13,7 +13,12 @@ from modules.core.time_parser import filter_post_starvation_data, is_time_zero, 
 from modules.parser import (
     standardize_observation_df,
     clean_cohort_name,
-    get_cohort_code
+    get_cohort_code,
+    is_bee_col,
+    get_bee_columns,
+    get_incubator_temp_col,
+    extract_key_from_df,
+    get_dataset_key_or_filename
 )
 
 CACHE_FILE = ".cached_df.csv"
@@ -124,7 +129,7 @@ def render_observation_sheet_editor():
         # Filter out pre-starvation time zero if present
         st.session_state['df'] = filter_post_starvation_data(st.session_state['df'])
 
-        bee_cols_init = [c for c in st.session_state['df'].columns if str(c).lower().startswith('bee')]
+        bee_cols_init = get_bee_columns(st.session_state['df'])
         for b in bee_cols_init:
             cons_col = b.replace("Bee ", "Cons ") + " (µL)"
             if cons_col not in st.session_state['df'].columns:
@@ -160,7 +165,9 @@ def render_observation_sheet_editor():
                     clean_f_df = standardize_observation_df(raw_f_df)
                     clean_f_df = clean_f_df.astype(str)
                     clean_f_df.replace("nan", "", inplace=True)
-                    norm_label = clean_cohort_name(f.name, clean_f_df)
+                    key_val = extract_key_from_df(clean_f_df)
+                    ident_name = key_val if key_val else f.name
+                    norm_label = clean_cohort_name(ident_name, clean_f_df, fallback_to_blinded=True)
                     st.session_state['user_uploaded_files'].add(f.name)
                     st.session_state['uploaded_file_dict'][f.name] = (norm_label, clean_f_df)
                     last_uploaded_name = f.name
@@ -186,11 +193,19 @@ def render_observation_sheet_editor():
         if cur_active not in f_keys:
             cur_active = f_keys[0]
 
+        def format_sheet_option(k):
+            c_lbl, c_df = st.session_state['uploaded_file_dict'][k]
+            k_val = extract_key_from_df(c_df)
+            code = get_cohort_code(c_lbl)
+            if k_val:
+                return f"🔑 {k_val} [{code}] ({k})"
+            return f"{c_lbl} [{code}] ({k})"
+
         active_f = st.selectbox(
             "📂 Active Cohort Sheet to View / Edit in Table & Single-CSV Plots:",
             f_keys,
             index=f_keys.index(cur_active),
-            format_func=lambda k: f"{st.session_state['uploaded_file_dict'][k][0]} [{get_cohort_code(st.session_state['uploaded_file_dict'][k][0])}] ({k})",
+            format_func=format_sheet_option,
             key="tab1_active_sheet_selector"
         )
         if active_f != st.session_state.get('active_sheet_key'):
@@ -203,13 +218,14 @@ def render_observation_sheet_editor():
     col1, col2, col3 = st.columns([1.5, 1, 4])
     with col1:
         if st.button("➕ Add Bee Column"):
-            bee_cols = [c for c in st.session_state['df'].columns if str(c).lower().startswith('bee')]
+            bee_cols = get_bee_columns(st.session_state['df'])
             new_idx = len(bee_cols) + 1
             new_col_name = f"Bee {new_idx}"
             new_cons_name = f"Cons {new_idx} (µL)"
-            try:
-                temp_idx = list(st.session_state['df'].columns).index("Temp (°C)")
-            except ValueError:
+            temp_c = get_incubator_temp_col(st.session_state['df'].columns)
+            if temp_c and temp_c in st.session_state['df'].columns:
+                temp_idx = list(st.session_state['df'].columns).index(temp_c)
+            else:
                 temp_idx = len(st.session_state['df'].columns)
             st.session_state['df'].insert(temp_idx, new_col_name, "A")
             st.session_state['df'].insert(temp_idx + 1, new_cons_name, "0.0")

@@ -14,6 +14,7 @@ COHORT_SUCROSE_2UL = "sucrose solution 2 microliter"
 COHORT_ACETONE_5PCT_2UL = "5 % acetone 2 microliter"
 COHORT_ACETONE_10PCT_2UL = "10 % acetone 2 microliter"
 COHORT_ACETONE_5PCT_5UL = "5 % acetone 5 microliter"
+COHORT_BLINDED = "None / Blinded (Unknown)"
 
 AGREED_COHORTS = [
     COHORT_SUCROSE_2UL,
@@ -22,45 +23,95 @@ AGREED_COHORTS = [
     COHORT_ACETONE_5PCT_5UL
 ]
 
+# Extended options including blind experiment option
+ALL_COHORT_OPTIONS = [
+    COHORT_BLINDED,
+    COHORT_SUCROSE_2UL,
+    COHORT_ACETONE_5PCT_2UL,
+    COHORT_ACETONE_10PCT_2UL,
+    COHORT_ACETONE_5PCT_5UL,
+    "Custom / Other"
+]
+
 # Standard agreed short code names for charts, legends, forest plots, and summary badges
 COHORT_CODE_NAMES = {
     COHORT_SUCROSE_2UL: "Sucrose 2 µL",
     COHORT_ACETONE_5PCT_2UL: "5% Acetone 2 µL",
     COHORT_ACETONE_10PCT_2UL: "10% Acetone 2 µL",
-    COHORT_ACETONE_5PCT_5UL: "5% Acetone 5 µL"
+    COHORT_ACETONE_5PCT_5UL: "5% Acetone 5 µL",
+    COHORT_BLINDED: "Blinded"
 }
 
-# Harmonized distinct visual palette for the 4 cohorts
+# Harmonized distinct visual palette for the cohorts
 COHORT_PALETTE = {
     COHORT_SUCROSE_2UL: "#2563eb",       # Royal Blue (Control / Baseline)
     COHORT_ACETONE_5PCT_2UL: "#0d9488",  # Teal / Cyan-Green (Mild solvent)
     COHORT_ACETONE_10PCT_2UL: "#f59e0b", # Amber / Orange (Moderate solvent)
-    COHORT_ACETONE_5PCT_5UL: "#dc2626"   # Crimson Red (High volume solvent)
+    COHORT_ACETONE_5PCT_5UL: "#dc2626",  # Crimson Red (High volume solvent)
+    COHORT_BLINDED: "#64748b"            # Slate Gray (Neutral Blinded)
 }
 
 COHORT_MARKERS = {
     COHORT_SUCROSE_2UL: "o",       # Circle
     COHORT_ACETONE_5PCT_2UL: "s",  # Square
     COHORT_ACETONE_10PCT_2UL: "^", # Triangle Up
-    COHORT_ACETONE_5PCT_5UL: "D"   # Diamond
+    COHORT_ACETONE_5PCT_5UL: "D",  # Diamond
+    COHORT_BLINDED: "o"            # Circle
 }
 
 
-def clean_cohort_name(raw_name: str, df=None) -> str:
+def extract_key_from_df(df) -> str:
+    """
+    Extracts non-empty key value from DataFrame if a 'key' column exists.
+    Returns empty string if column is absent or all values are empty / blank / NaN.
+    """
+    if df is not None and isinstance(df, pd.DataFrame):
+        for col in df.columns:
+            if str(col).strip().lower() == 'key':
+                vals = [str(x).strip() for x in df[col].dropna() if str(x).strip() and str(x).strip().lower() not in ['nan', 'none', 'null', '']]
+                if vals:
+                    return vals[0]
+    return ""
+
+
+def get_dataset_key_or_filename(raw_name: str, df=None) -> str:
+    """
+    Returns the key value from the DataFrame if present and non-empty.
+    If there is no key value, falls back to the file name.
+    """
+    key_val = extract_key_from_df(df)
+    if key_val:
+        return key_val
+    return str(raw_name).strip() if raw_name else "Dataset"
+
+
+def clean_cohort_name(raw_name: str, df=None, fallback_to_blinded: bool = False) -> str:
     """
     Intelligently cleans and maps raw filenames or user inputs to the agreed standard cohort name.
-    Inspects optional DataFrame's 'Treatment' column or checks local file on disk to accurately
+    Inspects optional DataFrame's 'key' or 'Treatment' column, or checks local file on disk to accurately
     identify cohorts like '10 % Acetone' from '2026-30_export.csv'.
-    Eliminates ugly raw strings like 'sample_control_0uM.csv' or 'treatment_10_micro_liter.csv'.
+    If a non-empty 'key' is present in df, uses the key value for identification.
+    If there is no key value, uses the file name.
+    If fallback_to_blinded is True and no known treatment matches, returns COHORT_BLINDED.
     """
-    if not raw_name and df is None:
-        return COHORT_SUCROSE_2UL
+    # Check if df contains a non-empty key value
+    key_val = extract_key_from_df(df)
+    effective_name = key_val if key_val else raw_name
+
+    if not effective_name and df is None:
+        return COHORT_BLINDED if fallback_to_blinded else COHORT_SUCROSE_2UL
+
+    # Check for explicit blinded indicator
+    if str(effective_name).strip() in [COHORT_BLINDED, "None", "None / Blinded", "Blinded (Unknown)", "Blinded"]:
+        return COHORT_BLINDED
 
     # 1. Check DataFrame's 'Treatment' column first if available
     if df is not None and isinstance(df, pd.DataFrame) and 'Treatment' in df.columns:
         t_vals = [str(x).strip().lower() for x in df['Treatment'].dropna() if str(x).strip()]
         if t_vals:
             t_str = " ".join(t_vals[:5])
+            if any(k in t_str for k in ["none", "blind", "unknown", "nan"]):
+                return COHORT_BLINDED
             if "10" in t_str and ("acetone" in t_str or "%" in t_str):
                 return COHORT_ACETONE_10PCT_2UL
             if "5" in t_str and ("5ul" in t_str or "5 microliter" in t_str or "5_ul" in t_str or t_str.count("5") >= 2):
@@ -70,10 +121,10 @@ def clean_cohort_name(raw_name: str, df=None) -> str:
             if any(k in t_str for k in ["sucrose", "control", "water", "ctrl", "0um"]):
                 return COHORT_SUCROSE_2UL
 
-    s = str(raw_name).strip() if raw_name else ""
+    s = str(effective_name).strip() if effective_name else ""
 
     # Exact matches first
-    if s in AGREED_COHORTS:
+    if s in AGREED_COHORTS or s == COHORT_BLINDED:
         return s
     for full_n, code_n in COHORT_CODE_NAMES.items():
         if s.lower() == code_n.lower():
@@ -85,7 +136,7 @@ def clean_cohort_name(raw_name: str, df=None) -> str:
         try:
             peek_df = pd.read_csv(f_path, nrows=2)
             if 'Treatment' in peek_df.columns:
-                return clean_cohort_name(raw_name, df=peek_df)
+                return clean_cohort_name(raw_name, df=peek_df, fallback_to_blinded=fallback_to_blinded)
         except Exception:
             pass
 
@@ -93,6 +144,9 @@ def clean_cohort_name(raw_name: str, df=None) -> str:
     s_clean = re.sub(r"\.(csv|tsv|txt|xlsx)$", "", s, flags=re.IGNORECASE)
     s_clean = re.sub(r"^(sample_|batch_|file_|data_)", "", s_clean, flags=re.IGNORECASE)
     s_clean_lower = s_clean.lower()
+
+    if any(k in s_clean_lower for k in ["blind", "unknown"]):
+        return COHORT_BLINDED
 
     # Match Control / Sucrose
     if any(k in s_clean_lower for k in ["sucrose", "control", "0um", "0_um", "ctrl", "water"]):
@@ -110,6 +164,9 @@ def clean_cohort_name(raw_name: str, df=None) -> str:
     if "5" in s_clean_lower and ("2" in s_clean_lower or "2ul" in s_clean_lower or "2 microliter" in s_clean_lower or "acetone" in s_clean_lower):
         return COHORT_ACETONE_5PCT_2UL
 
+    if fallback_to_blinded:
+        return COHORT_BLINDED
+
     # Clean generic fallback: replace underscores with spaces and title-case
     cleaned = re.sub(r"[_\-]+", " ", s_clean).strip()
     return cleaned.title() if cleaned else raw_name
@@ -117,6 +174,10 @@ def clean_cohort_name(raw_name: str, df=None) -> str:
 
 def get_cohort_code(cohort_name: str, df=None) -> str:
     """Returns the standardized short code name for a given cohort."""
+    if not cohort_name or str(cohort_name).strip() in [COHORT_BLINDED, "None", "None / Blinded", "Blinded (Unknown)", "Blinded"]:
+        return "Blinded"
+    if cohort_name in COHORT_CODE_NAMES:
+        return COHORT_CODE_NAMES[cohort_name]
     full_c = clean_cohort_name(cohort_name, df=df)
     return COHORT_CODE_NAMES.get(full_c, full_c)
 

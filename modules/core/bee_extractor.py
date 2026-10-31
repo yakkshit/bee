@@ -8,8 +8,22 @@ import numpy as np
 import pandas as pd
 
 from modules.core.time_parser import parse_time_data
+from modules.core.batch_parser import (
+    get_bee_columns,
+    get_incubator_temp_col,
+    get_incubator_humidity_col,
+    find_matching_cons_col
+)
+
+try:
+    import streamlit as st
+    cache_data_fn = st.cache_data
+except Exception:
+    def cache_data_fn(func):
+        return func
 
 
+@cache_data_fn
 def extract_individual_bee_survival(df_in, batch_name="Batch", elapsed_days=None):
     """
     Extracts individual bee level survival data:
@@ -26,7 +40,7 @@ def extract_individual_bee_survival(df_in, batch_name="Batch", elapsed_days=None
         from modules.core.batch_parser import standardize_observation_df
         df_copy = standardize_observation_df(df_copy, default_treatment=batch_name)
 
-    bee_cols = [c for c in df_copy.columns if str(c).lower().startswith('bee') and str(c).lower() != 'bee_id']
+    bee_cols = get_bee_columns(df_copy)
     num_days = len(df_copy)
 
     if elapsed_days is None:
@@ -44,37 +58,31 @@ def extract_individual_bee_survival(df_in, batch_name="Batch", elapsed_days=None
                 return state
         return 'A'
 
+    # Incubator environmental conditions (strictly ignoring outdoor/outside columns)
+    incubator_temp_col = get_incubator_temp_col(df_copy.columns)
+    incubator_humid_col = get_incubator_humidity_col(df_copy.columns)
     temp_val = np.nan
     humid_val = np.nan
-    for c in df_copy.columns:
-        cl = str(c).lower()
-        if 'temp' in cl:
-            try:
-                temp_val = float(pd.to_numeric(df_copy[c], errors='coerce').mean())
-            except Exception:
-                pass
-        elif 'humid' in cl:
-            try:
-                humid_val = float(pd.to_numeric(df_copy[c], errors='coerce').mean())
-            except Exception:
-                pass
+    if incubator_temp_col:
+        try:
+            temp_val = float(pd.to_numeric(df_copy[incubator_temp_col], errors='coerce').mean())
+        except Exception:
+            pass
+    if incubator_humid_col:
+        try:
+            humid_val = float(pd.to_numeric(df_copy[incubator_humid_col], errors='coerce').mean())
+        except Exception:
+            pass
 
     rows = []
     for bc in bee_cols:
         b_states = df_copy[bc].fillna("A").tolist()
         final_state = get_latest_state(b_states, num_days - 1)
 
-        cons_candidates = [
-            bc.replace("Bee ", "Cons ") + " (µL)",
-            bc.replace("Bee ", "Cons ") + " (uL)",
-            bc.replace("Bee", "Cons")
-        ]
+        c_matched = find_matching_cons_col(df_copy.columns, bc)
         cons_vals = []
-        for candidate in cons_candidates:
-            matched = [c for c in df_copy.columns if candidate.lower() in str(c).lower()]
-            if matched:
-                cons_vals = pd.to_numeric(df_copy[matched[0]], errors='coerce').fillna(0.0).tolist()
-                break
+        if c_matched:
+            cons_vals = pd.to_numeric(df_copy[c_matched], errors='coerce').fillna(0.0).tolist()
 
         if final_state == 'D':
             d_star = num_days - 1

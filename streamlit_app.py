@@ -1,11 +1,5 @@
-import sys
+# Bee Analytics Studio Main Application
 import streamlit as st
-
-# Automatically refresh local modules so code modifications take effect immediately
-for _m in list(sys.modules.keys()):
-    if _m == 'modules' or _m.startswith('modules.'):
-        del sys.modules[_m]
-
 from modules.styles import (
     inject_custom_styles,
     render_sidebar_controls,
@@ -15,6 +9,7 @@ from modules.styles import (
 from modules.tab_single import render_single_batch_tab
 from modules.tab_multi import render_multi_batch_tab
 from modules.tab_survival import render_survival_tab
+from modules.tab_ai_plots import render_ai_plots_tab
 from modules.tab_spss import render_spss_tab
 
 # Page configuration
@@ -35,11 +30,16 @@ settings = render_sidebar_controls()
 render_hero_banner()
 render_metadata_expander()
 
+# Global Header Download Center (One-Click Bulk Downloads)
+from modules.global_exporter import render_header_global_download
+render_header_global_download()
+
 # Main Application Tabs
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🐝 Single CSV Analysis",
     "📈 Multi-CSV Probit Comparison",
     "🔬 Survival Statistics (Log-Rank & Cox Regression)",
+    "🤖 AI Plot Studio (ChatGPT Code Runner)",
     "🔮 SPSS Suite (Coming Soon)"
 ])
 
@@ -53,4 +53,7 @@ with tab3:
     render_survival_tab()
 
 with tab4:
+    render_ai_plots_tab()
+
+with tab5:
     render_spss_tab()

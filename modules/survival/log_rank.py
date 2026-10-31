@@ -113,7 +113,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             )
 
         if "Observed vs. Expected" in plot_view:
-            fig_lr, ax_lr = plt.subplots(figsize=(9.2, 5.2), dpi=300)
+            fig_lr, ax_lr = plt.subplots(figsize=(10.2, 5.2), dpi=140)
             ax_lr.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
             x_indices = np.arange(len(groups))
@@ -143,7 +143,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             ax_lr.set_xticklabels(groups, fontsize=10.5, fontweight='bold', rotation=15, ha='right')
             ax_lr.set_ylim(0, max_y * 1.25)
             ax_lr.set_title(f'Log-Rank Test: Observed vs. Expected Deaths Under H₀ (χ² = {chisq:.3f}, p = {p_str})', fontsize=13, fontweight='bold', pad=12)
-            ax_lr.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.92, fontsize=10)
+            ax_lr.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', framealpha=0.95, edgecolor='#cbd5e1', fontsize=9.5)
             ax_lr.spines['top'].set_visible(False)
             ax_lr.spines['right'].set_visible(False)
             fig_lr.tight_layout()
@@ -158,7 +158,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
 
         else:
             # Cumulative Hazard Plot: H(t) via Nelson-Aalen Estimator
-            fig_hz, ax_hz = plt.subplots(figsize=(9.2, 5.2), dpi=300)
+            fig_hz, ax_hz = plt.subplots(figsize=(10.0, 5.2), dpi=140)
             ax_hz.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
             for idx_g, g in enumerate(groups):
@@ -175,7 +175,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             ax_hz.set_title(f'Log-Rank Cumulative Hazard Curves H(t) Across Cohorts (χ² = {chisq:.3f}, p = {p_str})', fontsize=13, fontweight='bold', pad=12)
             ax_hz.spines['top'].set_visible(False)
             ax_hz.spines['right'].set_visible(False)
-            ax_hz.legend(loc='upper left', frameon=True, facecolor='white', framealpha=0.92, fontsize=10)
+            ax_hz.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', framealpha=0.92, edgecolor='#cbd5e1', fontsize=9.5)
             fig_hz.tight_layout()
 
             st.pyplot(fig_hz)

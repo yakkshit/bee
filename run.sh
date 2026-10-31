@@ -26,7 +26,13 @@ else
 
     echo "Using Python executable: $PYTHON_CMD"
 
-    VENV_DIR=".venv_run"
+    if [ -d ".venv_run" ]; then
+        VENV_DIR=".venv_run"
+    elif [ -d ".venv" ]; then
+        VENV_DIR=".venv"
+    else
+        VENV_DIR=".venv"
+    fi
 
     # Check if virtual environment exists
     if [ ! -d "$VENV_DIR" ]; then

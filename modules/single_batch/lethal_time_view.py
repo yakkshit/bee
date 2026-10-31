@@ -81,7 +81,7 @@ def render_single_lethal_time_view(computed, settings=None, image_collector=None
     # Plot A: LT_X Threshold Spectrum Sigmoid Plot
     with col_lt1:
         st.subheader("Lethal Time (LTₓ) Threshold Spectrum Plot")
-        fig_lt_spec, ax_lt_s = plt.subplots(figsize=(7.2, 5.4), dpi=300)
+        fig_lt_spec, ax_lt_s = plt.subplots(figsize=(8.0, 5.4), dpi=140)
 
         # Background Sigmoid curve
         ax_lt_s.plot(t_dense, fit_mort_curve, color=primary_color, linewidth=line_width, label='Fitted Mortality Curve', zorder=3)
@@ -128,7 +128,7 @@ def render_single_lethal_time_view(computed, settings=None, image_collector=None
         ax_lt_s.yaxis.set_major_locator(MultipleLocator(20))
         ax_lt_s.spines['top'].set_visible(False)
         ax_lt_s.spines['right'].set_visible(False)
-        ax_lt_s.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='#e2e8f0', fontsize=9.5)
+        ax_lt_s.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#e2e8f0', fontsize=9.0)
         fig_lt_spec.tight_layout()
         st.pyplot(fig_lt_spec)
         if image_collector:
@@ -141,7 +141,7 @@ def render_single_lethal_time_view(computed, settings=None, image_collector=None
         elap_vals = [r['effective_elapsed_int'] if np.isfinite(r.get('effective_elapsed_int', np.nan)) else 0.0 for r in lt_records]
         pcts = [r['percentile'] for r in lt_records]
 
-        fig_lt_bar, ax_lt_b = plt.subplots(figsize=(7.2, max(4.8, len(lbls) * 0.52)), dpi=300)
+        fig_lt_bar, ax_lt_b = plt.subplots(figsize=(7.2, max(4.8, len(lbls) * 0.52)), dpi=140)
         y_pos = np.arange(len(lbls))
         cmap_bar = plt.cm.viridis
         bar_colors = [cmap_bar(p / 100.0) for p in pcts]

@@ -339,6 +339,13 @@ def render_sidebar_controls():
 
     plt.rcParams['font.size'] = font_size
 
+    # Render persistent global download center in the sidebar
+    try:
+        from modules.global_exporter import render_sidebar_global_download
+        render_sidebar_global_download()
+    except Exception:
+        pass
+
     return {
         'primary_color': primary_color,
         'secondary_color': secondary_color,
