@@ -1,5 +1,0 @@
-Day,Date/time,Bee 1,Cons 1 (µL),TCons 1 (µL),Bee 2,Cons 2 (µL),TCons 2 (µL),Bee 3,Cons 3 (µL),TCons 3 (µL),Bee 4,Cons 4 (µL),TCons 4 (µL),Bee 5,Cons 5 (µL),TCons 5 (µL),Bee 6,Cons 6 (µL),TCons 6 (µL),Bee 7,Cons 7 (µL),TCons 7 (µL),Bee 8,Cons 8 (µL),TCons 8 (µL),Bee 9,Cons 9 (µL),TCons 9 (µL),Bee 10,Cons 10 (µL),TCons 10 (µL),Bee 11,Cons 11 (µL),TCons 11 (µL),Bee 12,Cons 12 (µL),TCons 12 (µL),Bee 13,Cons 13 (µL),TCons 13 (µL),Bee 14,Cons 14 (µL),TCons 14 (µL),Temp (°C),Humidity,TempTreatment,Observations/notes,StartTime,Weather,BeeType,Hive/ColonyID,OutDoorHumidity,OutsideTemp,key
-Day 1,27.10.2026-17:20,A,15,5,A,25,5,A,10,15,A,20,5,A,30,5,A,15,5,A,10,5,A,20,5,A,10,5,A,15,5,A,15,5,A,20,5,A,20,5,A,7,5,24.1,43,,,15:25,Sunny,Forager,14,62,17.8,
-Day 2,28.10.2026-16:35,D,0,0,A,10,10,A,5,5,A,10,5,A,15,5,A,20,5,A,15,5,A,20,5,A,20,5,A,25,5,A,12,5,A,15,5,A,10,5,A,15,5,22.7,47,,,,,,,,,
-Day 3,29.10.2026-15:18,D,0,0,A,15,5,A,10,5,A,10,5,A,10,5,A,15,5,A,10,5,A,20,5,A,5,5,A,10,5,A,10,5,A,5,5,A,10,5,A,0,5,23.3,41,,,,,,,,,
-Day 4,30.10.2026-13:37,D,0,0,A,15,5,A,5,5,A,10,5,A,20,5,A,15,5,A,10,5,A,15,5,A,20,5,A,20,5,A,5,5,A,5,5,A,5,5,D,0,0,22.2,38,,,,,,,,,
