@@ -1,4 +1,4 @@
-# 🐝 Antigravity Bee Analytics Studio
+# 🐝 Bee Analytics Studio
 
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Streamlit App](https://img.shields.io/badge/Streamlit-1.32.2-FF4B4B.svg)](https://streamlit.io/)
@@ -31,7 +31,7 @@ Oral exposure bioassays in honeybees (*Apis mellifera*) are vital for evaluating
 3. **Observation Inconsistencies**: Bees erroneously recorded as dead ($D$) on early days may subsequently exhibit antennae or physical mobility ($A$ or $B$).
 4. **Custom Figure Creation**: Academic researchers and professors often need specialized figures for scientific publication but may not write Python code, relying on LLMs (such as ChatGPT or Claude) for scripting.
 
-**Antigravity Bee Analytics Studio** solves these challenges with an integrated, mathematically rigorous, reproducible framework.
+**Bee Analytics Studio** solves these challenges with an integrated, mathematically rigorous, reproducible framework.
 
 ---
 
@@ -205,16 +205,3 @@ cd bee-analytics-studio
 ```
 
 ---
-
-## 📖 Citation
-
-If you use Antigravity Bee Analytics Studio in your research or publication, please cite:
-
-```bibtex
-@software{antigravity_bee_studio_2026,
-  author = {Research Laboratory of Bee Biology and Toxicology},
-  title = {Antigravity Bee Analytics Studio: Computational Platform for Honeybee Longevity, Finney Probit Modeling, and Survival Biostatistics},
-  year = {2026},
-  url = {https://github.com/your-username/bee-analytics-studio}
-}
-```

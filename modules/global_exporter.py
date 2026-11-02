@@ -1,5 +1,5 @@
 """
-Global Exporter Module for Antigravity Bee Analytics Studio.
+Global Exporter Module for Bee Analytics Studio.
 Provides unified, one-click global download capabilities across the entire application:
 - All Single-CSV analysis plots in a ZIP package
 - All Multi-CSV comparison plots in a ZIP package
@@ -72,7 +72,7 @@ def get_complete_master_zip() -> bytes:
 
         # 3. Readme summary text inside the ZIP
         manifest_text = (
-            "Antigravity Bee Analytics Studio — Complete Plot Export Bundle\n"
+            "Bee Analytics Studio — Complete Plot Export Bundle\n"
             "==============================================================\n\n"
             f"• Single-CSV Analysis Figures: {len(single_images)} plots\n"
             f"• Multi-CSV Comparison Figures: {len(multi_images)} plots\n"

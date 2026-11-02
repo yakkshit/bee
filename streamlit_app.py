@@ -22,6 +22,7 @@ from modules.tab_multi import render_multi_batch_tab
 from modules.tab_survival import render_survival_tab
 from modules.tab_ai_plots import render_ai_plots_tab
 from modules.tab_spss import render_spss_tab
+from modules.tab_doc import render_doc_page
 
 # Page configuration
 st.set_page_config(
@@ -33,6 +34,16 @@ st.set_page_config(
 
 # Apply UI design system & theme styling
 inject_custom_styles()
+
+# Check for query param route: ?page=doc
+if st.query_params.get("page") == "doc":
+    col_back, _ = st.columns([1, 5])
+    with col_back:
+        if st.button("⬅️ Return to Main Studio"):
+            st.query_params.clear()
+            st.rerun()
+    render_doc_page()
+    st.stop()
 
 # Sidebar aesthetic & statistical controls
 settings = render_sidebar_controls()
@@ -46,12 +57,13 @@ from modules.global_exporter import render_header_global_download
 render_header_global_download()
 
 # Main Application Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🐝 Single CSV Analysis",
     "📈 Multi-CSV Probit Comparison",
     "🔬 Survival Statistics (Log-Rank & Cox Regression)",
     "🤖 AI Plot Studio (ChatGPT Code Runner)",
-    "🔮 SPSS Suite (Coming Soon)"
+    "🔮 SPSS Suite (Coming Soon)",
+    "📖 Scientific Documentation (/doc)"
 ])
 
 with tab1:
@@ -68,3 +80,6 @@ with tab4:
 
 with tab5:
     render_spss_tab()
+
+with tab6:
+    render_doc_page()

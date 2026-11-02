@@ -1,4 +1,4 @@
-# Antigravity Bee Analytics Studio Agent Guidelines & Bioassay Protocol
+# Bee Analytics Studio Agent Guidelines & Bioassay Protocol
 
 ## 🔬 Core Bioassay Protocol Rules (MANDATORY)
 

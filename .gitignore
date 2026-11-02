@@ -54,6 +54,7 @@ test*.pdf
 # CSV files: ignore dynamic exports and caches, but preserve benchmark sample data
 *.csv
 !2026-30_export.csv
+2026-30_export.csv
 
 # Temporary backups, reference dumps, and test directories
 18-10-2026*/

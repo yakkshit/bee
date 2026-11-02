@@ -1,6 +1,6 @@
-# 🚀 Antigravity Bee Analytics Studio — Installation & User Guide
+# 🚀  Bee Analytics Studio — Installation & User Guide
 
-Welcome to **Antigravity Bee Analytics Studio**! This document provides complete, step-by-step instructions for installing Python, setting up dependencies, running the application, and utilizing each feature.
+Welcome to **Bee Analytics Studio**! This document provides complete, step-by-step instructions for installing Python, setting up dependencies, running the application, and utilizing each feature.
 
 ---
 
