@@ -94,7 +94,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Interactive scope toggle
+    # Interactive scope toggle and cohort label format switch
     col_scope1, col_scope2 = st.columns([2.5, 1.5])
     with col_scope1:
         calc_scope = st.radio(
@@ -110,8 +110,25 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         )
     with col_scope2:
         show_sem_ribbon = st.checkbox("Show ± SEM Error Ribbons / Bars", value=True, key="multi_cons_sem_check")
+        cohort_label_mode = st.radio(
+            "Legend Labels:",
+            ["File Name", "Treatment Solution"],
+            index=0,
+            horizontal=True,
+            key="multi_cons_lbl_mode",
+            help="Switch between raw CSV filenames and standardized treatment cohort names in plot legends."
+        )
 
     use_alive_only = "Surviving" in calc_scope
+
+    def get_c_label(b_item):
+        if cohort_label_mode == "Treatment Solution":
+            t_lbl = b_item.get('treatment') or b_item.get('cohort')
+            if t_lbl and str(t_lbl).lower() not in ['none', 'blinded', 'nan', '']:
+                return str(t_lbl)
+        return b_item.get('filename') or b_item.get('orig_name') or b_item.get('name', 'Cohort')
+
+    has_any_tcons = any(b.get('has_tconsumption', False) for b in batches_with_cons)
 
     # Find global day range across batches
     max_days_count = max(b['num_days'] for b in batches_with_cons)
@@ -119,139 +136,378 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
     day_labels_ref = ref_batch.get('day_labels', [f"Day {d+1}" for d in range(max_days_count)])
 
     # =========================================================================
-    # PLOT 5.1: DAILY MEAN SUCROSE CONSUMPTION ACROSS ALL DAYS (LINE COMPARISON)
+    # PLOT 5.1: DAILY MEAN CONSUMPTION ACROSS ALL DAYS (LINE COMPARISON)
     # =========================================================================
-    st.subheader("5.1 Daily Mean Sucrose Consumption Across All Observation Days")
-    st.caption("Direct time-series comparison of daily sucrose consumption (µL/bee/day) across all cohorts, with shaded ± SEM uncertainty bands.")
+    st.subheader("5.1 Daily Mean Consumption Across All Observation Days")
+    st.caption("Direct time-series comparison of daily consumption (µL/bee/day) across all cohorts, with shaded ± SEM uncertainty bands.")
 
-    fig_cons_lines, ax_cl = plt.subplots(figsize=(10.5, 6.0), dpi=140)
-    ax_cl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+    tab_l_sucrose, tab_l_tcons, tab_l_dual = st.tabs([
+        "🍯 Daily Sucrose Trajectories (Cons)",
+        "🧪 Daily Treatment Trajectories (TCons)",
+        "⚖️ Dual Trajectory Comparison (Sucrose vs. Treatment)"
+    ])
 
-    legend_handles_cons = []
     num_batches = len(batches_with_cons)
 
-    for idx, b in enumerate(batches_with_cons):
-        n_days_b = b['num_days']
-        x_raw = np.arange(1, n_days_b + 1)
-        offset = (idx - (num_batches - 1) / 2.0) * 0.08
-        x_jittered = x_raw + offset
+    with tab_l_sucrose:
+        fig_cons_lines, ax_cl = plt.subplots(figsize=(10.5, 6.0), dpi=300)
+        ax_cl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
-        mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
-        sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
+        legend_handles_cons = []
+        for idx, b in enumerate(batches_with_cons):
+            n_days_b = b['num_days']
+            x_raw = np.arange(1, n_days_b + 1)
+            offset = (idx - (num_batches - 1) / 2.0) * 0.08
+            x_jittered = x_raw + offset
 
-        if len(mean_series) == 0:
-            continue
+            mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
+            sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
 
-        # Plot shaded SEM ribbon
-        if show_sem_ribbon and len(sem_series) == len(mean_series):
-            ax_cl.fill_between(
-                x_jittered,
-                np.clip(mean_series - sem_series, 0, None),
-                mean_series + sem_series,
-                color=b['color'], alpha=0.15, zorder=2
+            if len(mean_series) == 0:
+                continue
+
+            if show_sem_ribbon and len(sem_series) == len(mean_series):
+                ax_cl.fill_between(
+                    x_jittered,
+                    np.clip(mean_series - sem_series, 0, None),
+                    mean_series + sem_series,
+                    color=b['color'], alpha=0.15, zorder=2
+                )
+
+            ax_cl.plot(
+                x_jittered, mean_series,
+                color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
+                linewidth=line_width, markersize=marker_size, markeredgecolor='black',
+                zorder=4
             )
 
-        # Plot line and markers
-        ax_cl.plot(
-            x_jittered, mean_series,
-            color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
-            linewidth=line_width, markersize=marker_size, markeredgecolor='black',
-            zorder=4
-        )
+            b_lbl = get_c_label(b)
+            legend_handles_cons.append(
+                Line2D([0], [0], color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
+                       linewidth=line_width, markersize=marker_size, markeredgecolor='black',
+                       label=b_lbl)
+            )
 
-        b_fname = b.get('filename') or b.get('orig_name') or b.get('name', f"Cohort {idx+1}")
-        legend_handles_cons.append(
-            Line2D([0], [0], color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
-                   linewidth=line_width, markersize=marker_size, markeredgecolor='black',
-                   label=b_fname)
-        )
+        ax_cl.set_xlabel('Observation Day', fontsize=12.5, fontweight='bold', labelpad=8)
+        ax_cl.set_ylabel('Sucrose Consumption (µL / bee / day)', fontsize=12.5, fontweight='bold', labelpad=8)
+        ax_cl.set_xticks(np.arange(1, max_days_count + 1))
+        ax_cl.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
+        ax_cl.set_xlim(0.5, max_days_count + 0.5)
+        ax_cl.set_ylim(-0.5, None)
+        ax_cl.spines['top'].set_visible(False)
+        ax_cl.spines['right'].set_visible(False)
 
-    ax_cl.set_xlabel('Observation Day', fontsize=12.5, fontweight='bold', labelpad=8)
-    ax_cl.set_ylabel('Sucrose Consumption (µL / bee / day)', fontsize=12.5, fontweight='bold', labelpad=8)
-    ax_cl.set_xticks(np.arange(1, max_days_count + 1))
-    ax_cl.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
-    ax_cl.set_xlim(0.5, max_days_count + 0.5)
-    ax_cl.set_ylim(-0.5, None)
-    ax_cl.spines['top'].set_visible(False)
-    ax_cl.spines['right'].set_visible(False)
+        num_cols_leg = min(3, max(1, num_batches))
+        ax_cl.legend(handles=legend_handles_cons, loc='lower center', bbox_to_anchor=(0.5, 1.02),
+                     ncol=num_cols_leg, frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+        fig_cons_lines.tight_layout()
+        st.pyplot(fig_cons_lines)
 
-    num_cols_leg = min(3, max(1, num_batches))
-    ax_cl.legend(handles=legend_handles_cons, loc='lower center', bbox_to_anchor=(0.5, 1.02),
-                 ncol=num_cols_leg, frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
-    fig_cons_lines.tight_layout()
-    st.pyplot(fig_cons_lines)
+        buf_cl = io.BytesIO()
+        fig_cons_lines.savefig(buf_cl, format="png", dpi=300, bbox_inches='tight')
+        multi_plot_images['daily_sucrose_consumption_comparison.png'] = buf_cl.getvalue()
+        multi_cons_plots['01_multi_daily_sucrose_consumption_lines.png'] = buf_cl.getvalue()
+        st.download_button("📥 Download Daily Sucrose Consumption Line Chart (PNG)", data=buf_cl.getvalue(),
+                           file_name="daily_sucrose_consumption_comparison.png", mime="image/png", key="dl_multi_cons_lines")
+        plt.close(fig_cons_lines)
 
-    buf_cl = io.BytesIO()
-    fig_cons_lines.savefig(buf_cl, format="png", dpi=300, bbox_inches='tight')
-    multi_plot_images['daily_sucrose_consumption_comparison.png'] = buf_cl.getvalue()
-    multi_cons_plots['01_multi_daily_sucrose_consumption_lines.png'] = buf_cl.getvalue()
-    st.download_button("📥 Download Daily Consumption Line Chart (PNG)", data=buf_cl.getvalue(),
-                       file_name="daily_sucrose_consumption_comparison.png", mime="image/png", key="dl_multi_cons_lines")
-    plt.close(fig_cons_lines)
+    with tab_l_tcons:
+        if has_any_tcons:
+            fig_tcl_lines, ax_tcl = plt.subplots(figsize=(10.5, 6.0), dpi=300)
+            ax_tcl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+
+            legend_handles_tcons = []
+            for idx, b in enumerate(batches_with_cons):
+                n_days_b = b['num_days']
+                x_raw = np.arange(1, n_days_b + 1)
+                offset = (idx - (num_batches - 1) / 2.0) * 0.08
+                x_jittered = x_raw + offset
+
+                mean_tseries = b.get('daily_alive_mean_tcons', b.get('daily_mean_tcons')) if use_alive_only else b.get('daily_mean_tcons')
+                sem_tseries = b.get('daily_alive_sem_tcons', b.get('daily_sem_tcons')) if use_alive_only else b.get('daily_sem_tcons')
+
+                if len(mean_tseries) == 0:
+                    continue
+
+                if show_sem_ribbon and len(sem_tseries) == len(mean_tseries):
+                    ax_tcl.fill_between(
+                        x_jittered,
+                        np.clip(mean_tseries - sem_tseries, 0, None),
+                        mean_tseries + sem_tseries,
+                        color=b['color'], alpha=0.15, zorder=2
+                    )
+
+                ax_tcl.plot(
+                    x_jittered, mean_tseries,
+                    color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
+                    linewidth=line_width, markersize=marker_size, markeredgecolor='black',
+                    zorder=4
+                )
+
+                b_lbl = get_c_label(b)
+                legend_handles_tcons.append(
+                    Line2D([0], [0], color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
+                           linewidth=line_width, markersize=marker_size, markeredgecolor='black',
+                           label=b_lbl)
+                )
+
+            ax_tcl.set_xlabel('Observation Day', fontsize=12.5, fontweight='bold', labelpad=8)
+            ax_tcl.set_ylabel('Treatment Intake (µL / bee / day)', fontsize=12.5, fontweight='bold', labelpad=8)
+            ax_tcl.set_xticks(np.arange(1, max_days_count + 1))
+            ax_tcl.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
+            ax_tcl.set_xlim(0.5, max_days_count + 0.5)
+            ax_tcl.set_ylim(-0.2, None)
+            ax_tcl.spines['top'].set_visible(False)
+            ax_tcl.spines['right'].set_visible(False)
+
+            num_cols_leg = min(3, max(1, num_batches))
+            ax_tcl.legend(handles=legend_handles_tcons, loc='lower center', bbox_to_anchor=(0.5, 1.02),
+                          ncol=num_cols_leg, frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+            fig_tcl_lines.tight_layout()
+            st.pyplot(fig_tcl_lines)
+
+            buf_tcl = io.BytesIO()
+            fig_tcl_lines.savefig(buf_tcl, format="png", dpi=300, bbox_inches='tight')
+            multi_plot_images['daily_treatment_consumption_comparison.png'] = buf_tcl.getvalue()
+            multi_cons_plots['01b_multi_daily_treatment_consumption_lines.png'] = buf_tcl.getvalue()
+            st.download_button("📥 Download Daily Treatment Consumption Line Chart (PNG)", data=buf_tcl.getvalue(),
+                               file_name="daily_treatment_consumption_comparison.png", mime="image/png", key="dl_multi_tcons_lines")
+            plt.close(fig_tcl_lines)
+        else:
+            st.info("ℹ️ No Treatment Consumption ('TCons') columns detected in the active datasets.")
+
+    with tab_l_dual:
+        if has_any_tcons:
+            fig_dual_l, (ax_dl1, ax_dl2) = plt.subplots(1, 2, figsize=(14.0, 5.5), dpi=300, sharex=True)
+            ax_dl1.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+            ax_dl2.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+
+            handles_dual = []
+            for idx, b in enumerate(batches_with_cons):
+                n_days_b = b['num_days']
+                x_raw = np.arange(1, n_days_b + 1)
+                offset = (idx - (num_batches - 1) / 2.0) * 0.08
+                x_jittered = x_raw + offset
+
+                m_cons = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
+                m_tcons = b.get('daily_alive_mean_tcons', b.get('daily_mean_tcons')) if use_alive_only else b.get('daily_mean_tcons')
+
+                if len(m_cons) > 0:
+                    ax_dl1.plot(x_jittered, m_cons, color=b['color'], marker=b['marker'], linewidth=line_width, markersize=marker_size, markeredgecolor='black')
+                if len(m_tcons) > 0:
+                    ax_dl2.plot(x_jittered, m_tcons, color=b['color'], marker=b['marker'], linewidth=line_width, markersize=marker_size, markeredgecolor='black')
+
+                b_lbl = get_c_label(b)
+                handles_dual.append(Line2D([0], [0], color=b['color'], marker=b['marker'], linewidth=line_width, markersize=marker_size, markeredgecolor='black', label=b_lbl))
+
+            ax_dl1.set_title("🍯 Sucrose Consumption (Cons)", fontsize=12.5, fontweight='bold', pad=10)
+            ax_dl1.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
+            ax_dl1.set_ylabel("Sucrose Intake (µL / bee)", fontsize=11.5, fontweight='bold')
+            ax_dl1.spines['top'].set_visible(False)
+            ax_dl1.spines['right'].set_visible(False)
+
+            ax_dl2.set_title("🧪 Treatment Solution Consumption (TCons)", fontsize=12.5, fontweight='bold', pad=10)
+            ax_dl2.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
+            ax_dl2.set_ylabel("Treatment Intake (µL / bee)", fontsize=11.5, fontweight='bold')
+            ax_dl2.spines['top'].set_visible(False)
+            ax_dl2.spines['right'].set_visible(False)
+
+            ax_dl1.set_xticks(np.arange(1, max_days_count + 1))
+            ax_dl1.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=9.5, fontweight='bold')
+
+            fig_dual_l.legend(handles=handles_dual, loc='lower center', bbox_to_anchor=(0.5, -0.05), ncol=min(4, num_batches), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+            fig_dual_l.tight_layout(rect=[0, 0.06, 1.0, 1.0])
+            st.pyplot(fig_dual_l)
+
+            buf_dual_l = io.BytesIO()
+            fig_dual_l.savefig(buf_dual_l, format="png", dpi=300, bbox_inches='tight')
+            multi_plot_images['dual_consumption_trajectories.png'] = buf_dual_l.getvalue()
+            st.download_button("📥 Download Dual Consumption Trajectories (PNG)", data=buf_dual_l.getvalue(), file_name="dual_consumption_trajectories.png", mime="image/png", key="dl_dual_cons_trajectories")
+            plt.close(fig_dual_l)
+        else:
+            st.info("ℹ️ No Treatment Consumption ('TCons') columns detected in the active datasets.")
 
     st.markdown("---")
 
     # =========================================================================
-    # PLOT 5.2: DAY-BY-DAY GROUPED BAR CHART OF SUCROSE CONSUMPTION
+    # PLOT 5.2: DAY-BY-DAY GROUPED BAR CHART OF SUCROSE & TREATMENT CONSUMPTION
     # =========================================================================
     st.subheader("5.2 Day-by-Day Grouped Bar Chart Comparison")
-    st.caption("Granular day-by-day comparison of sucrose consumption: directly compares the average intake across all cohorts on each individual experimental day.")
+    st.caption("Granular day-by-day comparison of intake: directly compares the average intake across all cohorts on each individual experimental day.")
 
-    fig_grouped_bars, ax_gb = plt.subplots(figsize=(12.0, 6.0), dpi=140)
-    ax_gb.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
+    tab_gb_sucrose, tab_gb_tcons, tab_gb_dual = st.tabs([
+        "🍯 Sucrose Consumption (Cons)",
+        "🧪 Treatment Consumption (TCons)",
+        "⚖️ Dual Intake Comparison (Cons vs. TCons)"
+    ])
 
     total_bar_width = 0.82
     single_bar_width = total_bar_width / max(1, num_batches)
     day_indices = np.arange(max_days_count)
 
-    for idx, b in enumerate(batches_with_cons):
-        mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
-        sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
+    with tab_gb_sucrose:
+        fig_grouped_bars, ax_gb = plt.subplots(figsize=(11.5, 6.0), dpi=300)
+        ax_gb.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
-        # Pad to max_days_count with 0 if fewer days
-        padded_means = [mean_series[d] if d < len(mean_series) else 0.0 for d in range(max_days_count)]
-        padded_sems = [sem_series[d] if d < len(sem_series) else 0.0 for d in range(max_days_count)]
+        for idx, b in enumerate(batches_with_cons):
+            mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
+            sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
 
-        bar_positions = day_indices - (total_bar_width / 2.0) + (idx + 0.5) * single_bar_width
+            padded_means = [mean_series[d] if d < len(mean_series) else 0.0 for d in range(max_days_count)]
+            padded_sems = [sem_series[d] if d < len(sem_series) else 0.0 for d in range(max_days_count)]
 
-        b_fname = b.get('filename') or b.get('orig_name') or b.get('name', f"Cohort {idx+1}")
-        bars = ax_gb.bar(
-            bar_positions, padded_means,
-            width=single_bar_width * 0.90,
-            yerr=padded_sems if show_sem_ribbon else None,
-            capsize=3.0,
-            color=b['color'], edgecolor='black', linewidth=1.0,
-            label=b_fname,
-            zorder=3
-        )
+            bar_positions = day_indices - (total_bar_width / 2.0) + (idx + 0.5) * single_bar_width
 
-        # Label numbers on top if reasonable number of days
-        if max_days_count <= 10:
-            for bar_i, bar in enumerate(bars):
-                h = bar.get_height()
-                if h > 0.5:
-                    ax_gb.text(bar.get_x() + bar.get_width() / 2.0, h + 0.35, f"{h:.1f}",
-                               ha='center', va='bottom', fontsize=7.5, fontweight='bold', color='#1e293b')
+            b_lbl = get_c_label(b)
+            bars = ax_gb.bar(
+                bar_positions, padded_means,
+                width=single_bar_width * 0.90,
+                yerr=padded_sems if show_sem_ribbon else None,
+                capsize=3.0,
+                color=b['color'], edgecolor='black', linewidth=1.0,
+                label=b_lbl,
+                zorder=3
+            )
 
-    ax_gb.set_xlabel('Observation Day', fontsize=12.5, fontweight='bold', labelpad=8)
-    ax_gb.set_ylabel('Sucrose Consumption (µL / bee)', fontsize=12.5, fontweight='bold', labelpad=8)
-    ax_gb.set_xticks(day_indices)
-    ax_gb.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
-    ax_gb.set_xlim(-0.6, max_days_count - 0.4)
-    ax_gb.set_ylim(0, None)
-    ax_gb.spines['top'].set_visible(False)
-    ax_gb.spines['right'].set_visible(False)
-    ax_gb.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
-    fig_grouped_bars.tight_layout()
-    st.pyplot(fig_grouped_bars)
+            if max_days_count <= 10:
+                for bar_i, bar in enumerate(bars):
+                    h = bar.get_height()
+                    if bar_i < len(mean_series):
+                        if h > 0.5:
+                            ax_gb.text(bar.get_x() + bar.get_width() / 2.0, h + 0.35, f"{h:.1f}",
+                                       ha='center', va='bottom', fontsize=7.5, fontweight='bold', color='#1e293b')
+                    else:
+                        ax_gb.text(bar.get_x() + bar.get_width() / 2.0, 0.2, "–",
+                                   ha='center', va='bottom', fontsize=8.0, fontweight='bold', color='#94a3b8')
 
-    buf_gb = io.BytesIO()
-    fig_grouped_bars.savefig(buf_gb, format="png", dpi=300, bbox_inches='tight')
-    multi_plot_images['day_by_day_grouped_bar_consumption.png'] = buf_gb.getvalue()
-    multi_cons_plots['02_multi_day_by_day_grouped_bar_consumption.png'] = buf_gb.getvalue()
-    st.download_button("📥 Download Day-by-Day Grouped Bar Chart (PNG)", data=buf_gb.getvalue(),
-                       file_name="day_by_day_grouped_bar_consumption.png", mime="image/png", key="dl_multi_cons_bars")
-    plt.close(fig_grouped_bars)
+        ax_gb.set_xlabel('Observation Day', fontsize=12.5, fontweight='bold', labelpad=8)
+        ax_gb.set_ylabel('Sucrose Consumption (µL / bee)', fontsize=12.5, fontweight='bold', labelpad=8)
+        ax_gb.set_xticks(day_indices)
+        ax_gb.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
+        ax_gb.set_xlim(-0.6, max_days_count - 0.4)
+        ax_gb.set_ylim(0, None)
+        ax_gb.spines['top'].set_visible(False)
+        ax_gb.spines['right'].set_visible(False)
+        ax_gb.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.5)
+        fig_grouped_bars.tight_layout()
+        st.pyplot(fig_grouped_bars)
+
+        cohort_lengths = {get_c_label(b): len(b.get('daily_mean_cons', [])) for i, b in enumerate(batches_with_cons)}
+        if len(set(cohort_lengths.values())) > 1:
+            diff_info = ", ".join([f"**{k}** ({v} days)" for k, v in cohort_lengths.items()])
+            st.info(f"💡 **Note on Missing Day 5 & 6 Bars:** Cohort observation durations differ across uploaded files ({diff_info}). Cohorts with 4 days (such as 02A and 02C) conclude at Day 4, so no data exists for Days 5 and 6.")
+
+        buf_gb = io.BytesIO()
+        fig_grouped_bars.savefig(buf_gb, format="png", dpi=300, bbox_inches='tight')
+        multi_plot_images['day_by_day_grouped_bar_consumption.png'] = buf_gb.getvalue()
+        multi_cons_plots['02_multi_day_by_day_grouped_bar_consumption.png'] = buf_gb.getvalue()
+        st.download_button("📥 Download Day-by-Day Grouped Bar Chart (PNG)", data=buf_gb.getvalue(),
+                           file_name="day_by_day_grouped_bar_consumption.png", mime="image/png", key="dl_multi_cons_bars")
+        plt.close(fig_grouped_bars)
+
+    with tab_gb_tcons:
+        if has_any_tcons:
+            fig_tgb, ax_tgb = plt.subplots(figsize=(11.5, 6.0), dpi=300)
+            ax_tgb.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
+
+            for idx, b in enumerate(batches_with_cons):
+                mean_tseries = b.get('daily_alive_mean_tcons', b.get('daily_mean_tcons')) if use_alive_only else b.get('daily_mean_tcons')
+                sem_tseries = b.get('daily_alive_sem_tcons', b.get('daily_sem_tcons')) if use_alive_only else b.get('daily_sem_tcons')
+
+                padded_tmeans = [mean_tseries[d] if d < len(mean_tseries) else 0.0 for d in range(max_days_count)]
+                padded_tsems = [sem_tseries[d] if d < len(sem_tseries) else 0.0 for d in range(max_days_count)]
+
+                bar_positions = day_indices - (total_bar_width / 2.0) + (idx + 0.5) * single_bar_width
+
+                b_lbl = get_c_label(b)
+                tbars = ax_tgb.bar(
+                    bar_positions, padded_tmeans,
+                    width=single_bar_width * 0.90,
+                    yerr=padded_tsems if show_sem_ribbon else None,
+                    capsize=3.0,
+                    color=b['color'], edgecolor='black', linewidth=1.0,
+                    label=b_lbl,
+                    zorder=3
+                )
+
+                if max_days_count <= 10:
+                    for bar_i, bar in enumerate(tbars):
+                        h = bar.get_height()
+                        if bar_i < len(mean_tseries):
+                            if h > 0.1:
+                                ax_tgb.text(bar.get_x() + bar.get_width() / 2.0, h + 0.15, f"{h:.1f}",
+                                            ha='center', va='bottom', fontsize=7.5, fontweight='bold', color='#1e293b')
+                        else:
+                            ax_tgb.text(bar.get_x() + bar.get_width() / 2.0, 0.1, "–",
+                                        ha='center', va='bottom', fontsize=8.0, fontweight='bold', color='#94a3b8')
+
+            ax_tgb.set_xlabel('Observation Day', fontsize=12.5, fontweight='bold', labelpad=8)
+            ax_tgb.set_ylabel('Treatment Solution Consumption (µL / bee)', fontsize=12.5, fontweight='bold', labelpad=8)
+            ax_tgb.set_xticks(day_indices)
+            ax_tgb.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
+            ax_tgb.set_xlim(-0.6, max_days_count - 0.4)
+            ax_tgb.set_ylim(0, None)
+            ax_tgb.spines['top'].set_visible(False)
+            ax_tgb.spines['right'].set_visible(False)
+            ax_tgb.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.5)
+            fig_tgb.tight_layout()
+            st.pyplot(fig_tgb)
+
+            buf_tgb = io.BytesIO()
+            fig_tgb.savefig(buf_tgb, format="png", dpi=300, bbox_inches='tight')
+            multi_plot_images['day_by_day_grouped_bar_treatment_consumption.png'] = buf_tgb.getvalue()
+            multi_cons_plots['02b_multi_day_by_day_grouped_bar_treatment_consumption.png'] = buf_tgb.getvalue()
+            st.download_button("📥 Download Day-by-Day Treatment Consumption Chart (PNG)", data=buf_tgb.getvalue(),
+                               file_name="day_by_day_grouped_bar_treatment_consumption.png", mime="image/png", key="dl_multi_tcons_bars")
+            plt.close(fig_tgb)
+        else:
+            st.info("ℹ️ No Treatment Consumption ('TCons') columns detected in active CSV files.")
+
+    with tab_gb_dual:
+        if has_any_tcons:
+            fig_dual_gb, (ax_dgb1, ax_dgb2) = plt.subplots(1, 2, figsize=(14.0, 5.8), dpi=300, sharex=True)
+            ax_dgb1.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
+            ax_dgb2.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
+
+            for idx, b in enumerate(batches_with_cons):
+                m_cons = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
+                m_tcons = b.get('daily_alive_mean_tcons', b.get('daily_mean_tcons')) if use_alive_only else b.get('daily_mean_tcons')
+
+                p_cons = [m_cons[d] if d < len(m_cons) else 0.0 for d in range(max_days_count)]
+                p_tcons = [m_tcons[d] if d < len(m_tcons) else 0.0 for d in range(max_days_count)]
+
+                bar_pos = day_indices - (total_bar_width / 2.0) + (idx + 0.5) * single_bar_width
+                b_lbl = get_c_label(b)
+
+                ax_dgb1.bar(bar_pos, p_cons, width=single_bar_width * 0.90, color=b['color'], edgecolor='black', linewidth=1.0, label=b_lbl, zorder=3)
+                ax_dgb2.bar(bar_pos, p_tcons, width=single_bar_width * 0.90, color=b['color'], edgecolor='black', linewidth=1.0, label=b_lbl, zorder=3)
+
+            ax_dgb1.set_title("🍯 Sucrose Consumption (Cons)", fontsize=12.5, fontweight='bold', pad=10)
+            ax_dgb1.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
+            ax_dgb1.set_ylabel("Sucrose Intake (µL / bee)", fontsize=11.5, fontweight='bold')
+            ax_dgb1.spines['top'].set_visible(False)
+            ax_dgb1.spines['right'].set_visible(False)
+
+            ax_dgb2.set_title("🧪 Treatment Solution Consumption (TCons)", fontsize=12.5, fontweight='bold', pad=10)
+            ax_dgb2.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
+            ax_dgb2.set_ylabel("Treatment Intake (µL / bee)", fontsize=11.5, fontweight='bold')
+            ax_dgb2.spines['top'].set_visible(False)
+            ax_dgb2.spines['right'].set_visible(False)
+
+            ax_dgb1.set_xticks(day_indices)
+            ax_dgb1.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=9.5, fontweight='bold')
+
+            ax_dgb1.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+            fig_dual_gb.tight_layout()
+            st.pyplot(fig_dual_gb)
+
+            buf_dual_gb = io.BytesIO()
+            fig_dual_gb.savefig(buf_dual_gb, format="png", dpi=300, bbox_inches='tight')
+            multi_plot_images['dual_day_by_day_consumption_bars.png'] = buf_dual_gb.getvalue()
+            st.download_button("📥 Download Dual Grouped Bar Chart (PNG)", data=buf_dual_gb.getvalue(), file_name="dual_day_by_day_consumption_bars.png", mime="image/png", key="dl_dual_cons_bars")
+            plt.close(fig_dual_gb)
+        else:
+            st.info("ℹ️ No Treatment Consumption ('TCons') columns detected in active CSV files.")
 
     st.markdown("---")
 
@@ -264,7 +520,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.3 Kaplan–Meier Feeding Persistence Curves")
         st.caption("Product-limit step curves for Feeding Cessation (Anorexia Endpoint). Event = Permanent cessation of sucrose feeding ($C \\le 0$).")
 
-        fig_km_multi_feed, ax_km_mf = plt.subplots(figsize=(9.2, 5.5), dpi=140)
+        fig_km_multi_feed, ax_km_mf = plt.subplots(figsize=(8.0, 5.5), dpi=300)
         ax_km_mf.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         kmf_feed_runner = KaplanMeierFitter()
@@ -326,10 +582,10 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
         if np.isfinite(lr_feed_p):
             p_text = f"p < 0.001" if lr_feed_p < 0.001 else f"p = {lr_feed_p:.4f}"
-            ax_km_mf.text(0.03, 0.06, f"Log-Rank (Feeding): {p_text}", transform=ax_km_mf.transAxes,
-                          fontsize=9.5, fontweight='bold', bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.95, boxstyle='round,pad=0.3'))
+            ax_km_mf.text(0.04, 0.12, f"Log-Rank (Feeding): {p_text}", transform=ax_km_mf.transAxes,
+                          fontsize=9.5, fontweight='bold', bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.9))
 
-        ax_km_mf.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+        ax_km_mf.legend(loc='lower left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
         fig_km_multi_feed.tight_layout()
         st.pyplot(fig_km_multi_feed)
 
@@ -348,7 +604,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.4 Cumulative Mean Sucrose Intake Over Days")
         st.caption("Cumulative average sucrose dose ingested per bee (µL) over the observation window across cohorts.")
 
-        fig_cum_intake, ax_ci = plt.subplots(figsize=(9.2, 5.5), dpi=140)
+        fig_cum_intake, ax_ci = plt.subplots(figsize=(8.0, 5.5), dpi=300)
         ax_ci.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         for b in batches_with_cons:
@@ -372,7 +628,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         ax_ci.set_ylim(0, None)
         ax_ci.spines['top'].set_visible(False)
         ax_ci.spines['right'].set_visible(False)
-        ax_ci.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+        ax_ci.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
         fig_cum_intake.tight_layout()
         st.pyplot(fig_cum_intake)
 
@@ -394,7 +650,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.5 Cohort × Day Sucrose Intake Heatmap Matrix")
         st.caption("2D Heatmap matrix of average daily sucrose consumption (µL/bee) across all cohorts and days.")
 
-        fig_heat_multi, ax_hm_m = plt.subplots(figsize=(8.2, 5.2), dpi=140)
+        fig_heat_multi, ax_hm_m = plt.subplots(figsize=(8.2, 5.2), dpi=300)
         cohort_labels_rev = [b.get('filename') or b.get('orig_name') or b.get('name', f"Cohort {i+1}") for i, b in enumerate(reversed(batches_with_cons))]
         heat_matrix = []
 
@@ -450,7 +706,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.6 Total Sucrose Intake vs. Survival Longevity")
         st.caption("Subject-level bioassay scatter: evaluates whether individual bee mortality was mediated by antifeedant starvation or direct chemical toxicity.")
 
-        fig_scatter_longev, ax_sl = plt.subplots(figsize=(9.2, 5.2), dpi=140)
+        fig_scatter_longev, ax_sl = plt.subplots(figsize=(8.2, 5.2), dpi=300)
         ax_sl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         all_tot_cons = []
@@ -493,7 +749,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         ax_sl.set_ylabel('Survival Duration (Days)', fontsize=11.5, fontweight='bold', labelpad=7)
         ax_sl.spines['top'].set_visible(False)
         ax_sl.spines['right'].set_visible(False)
-        ax_sl.legend(handles=scatter_legend_handles, bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+        ax_sl.legend(handles=scatter_legend_handles, loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
         fig_scatter_longev.tight_layout()
         st.pyplot(fig_scatter_longev)
 

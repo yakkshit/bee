@@ -15,6 +15,11 @@ from modules.core.batch_parser import (
     get_incubator_humidity_col,
     find_matching_cons_col
 )
+from modules.core.csv_auditor import (
+    audit_single_dataframe,
+    audit_batch_collection,
+    render_csv_diagnostics_banner
+)
 from modules.core.cohort_manager import (
     AGREED_COHORTS,
     ALL_COHORT_OPTIONS,
@@ -22,6 +27,8 @@ from modules.core.cohort_manager import (
     COHORT_PALETTE,
     COHORT_MARKERS,
     clean_cohort_name,
+    clean_display_name,
+    resolve_treatment_string,
     get_cohort_code,
     get_default_4_cohort_dataframes,
     get_active_cohort_dictionary,
@@ -41,6 +48,9 @@ __all__ = [
     'is_time_zero',
     'parse_batch_df',
     'standardize_observation_df',
+    'audit_single_dataframe',
+    'audit_batch_collection',
+    'render_csv_diagnostics_banner',
     'is_bee_col',
     'get_bee_columns',
     'get_incubator_temp_col',
@@ -56,6 +66,8 @@ __all__ = [
     'COHORT_PALETTE',
     'COHORT_MARKERS',
     'clean_cohort_name',
+    'clean_display_name',
+    'resolve_treatment_string',
     'get_cohort_code',
     'get_default_4_cohort_dataframes',
     'get_active_cohort_dictionary',

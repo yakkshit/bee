@@ -34,6 +34,12 @@ def render_single_batch_tab(settings=None):
     # 1. Observation Sheet Data Entry & Printable HTML Export
     df = render_observation_sheet_editor()
 
+    # CSV Data Quality & Bioassay Diagnostics Banner
+    from modules.core.csv_auditor import audit_single_dataframe, render_csv_diagnostics_banner
+    single_diagnostics = audit_single_dataframe(df, "Active Observation Sheet")
+    if single_diagnostics:
+        render_csv_diagnostics_banner(single_diagnostics, container_key="tab1_csv_audit")
+
     st.markdown("---")
     st.header("📊 Plot Generation & Analytics")
 
@@ -69,13 +75,20 @@ def render_single_batch_tab(settings=None):
 
     # Image Collector for individual downloads and unified ZIP packaging
     plot_images_dict = {}
+    seen_download_keys = set()
 
     def image_collector(fig, filename, text, key_suffix=""):
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=300, bbox_inches='tight')
         img_bytes = buf.getvalue()
         plot_images_dict[filename] = img_bytes
-        btn_key = f"dl_{filename}_{key_suffix}" if key_suffix else f"dl_{filename}"
+        base_key = f"dl_{filename}_{key_suffix}" if key_suffix else f"dl_{filename}"
+        btn_key = base_key
+        c_idx = 1
+        while btn_key in seen_download_keys:
+            btn_key = f"{base_key}_{c_idx}"
+            c_idx += 1
+        seen_download_keys.add(btn_key)
         st.download_button(label=f"📥 {text}", data=img_bytes, file_name=filename, mime="image/png", key=btn_key)
         plt.close(fig)
 

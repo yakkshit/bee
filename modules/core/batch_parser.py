@@ -116,6 +116,36 @@ def find_matching_cons_col(df_columns, bee_col_name: str) -> str:
                 return c
     return None
 
+
+def find_matching_tcons_col(df_columns, bee_col_name: str) -> str:
+    """
+    Finds exact treatment solution consumption column for a given bee (e.g. 'TCons 1 (µL)' for 'Bee 1').
+    """
+    match = re.search(r'\d+', bee_col_name)
+    b_num = match.group(0) if match else ""
+
+    candidates = [
+        f"TCons {b_num} (µL)",
+        f"TCons {b_num} (uL)",
+        f"TCons {b_num}",
+        f"TCons_{b_num}",
+        f"T_Cons {b_num}",
+        f"T-Cons {b_num}",
+        bee_col_name.replace("Bee ", "TCons ") + " (µL)",
+        bee_col_name.replace("Bee ", "TCons ") + " (uL)",
+        bee_col_name.replace("Bee", "TCons")
+    ]
+    for cand in candidates:
+        for c in df_columns:
+            if cand.lower() == str(c).strip().lower():
+                return c
+    for cand in candidates:
+        for c in df_columns:
+            c_low = str(c).strip().lower()
+            if cand.lower() in c_low and ('tcons' in c_low or 't_cons' in c_low):
+                return c
+    return None
+
 try:
     import streamlit as st
     cache_data_fn = st.cache_data
@@ -254,31 +284,65 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
     else:
         a, b, r_val, r_squared = 0.0, 0.0, 0.0, 0.0
 
-    # Calculate default LT50 and LT90
-    if b > 0:
+    # Calculate default LT50 and LT90 (with bioassay boundary protection)
+    max_t = batch_elapsed_days[-1] if len(batch_elapsed_days) > 0 else 6.0
+    max_m = max(abbott_corrected_pct) if len(abbott_corrected_pct) > 0 else 0.0
+
+    if b > 1e-6:
         probit_50 = 5.0
         probit_90 = norm.ppf(0.90) + 5.0
-        lt50_theoretical = 10.0 ** ((probit_50 - a) / b)
-        lt90_theoretical = 10.0 ** ((probit_90 - a) / b)
-        lt50_elapsed = lt50_theoretical - start_time if lt50_theoretical > start_time else 1.0
-        lt90_elapsed = lt90_theoretical - start_time if lt90_theoretical > start_time else 1.0
+        exp_50 = (probit_50 - a) / b
+        exp_90 = (probit_90 - a) / b
+
+        lt50_theoretical = float(10.0 ** exp_50) if exp_50 <= 4.0 else np.nan
+        lt90_theoretical = float(10.0 ** exp_90) if exp_90 <= 4.0 else np.nan
+
+        if max_m >= 50.0 or (np.isfinite(lt50_theoretical) and lt50_theoretical <= max(14.0, max_t * 2.0) and max_m >= 25.0):
+            lt50_elapsed = lt50_theoretical - start_time if lt50_theoretical > start_time else 1.0
+        else:
+            lt50_elapsed = np.nan
+
+        if max_m >= 90.0 or (np.isfinite(lt90_theoretical) and lt90_theoretical <= max(20.0, max_t * 3.0) and max_m >= 45.0):
+            lt90_elapsed = lt90_theoretical - start_time if lt90_theoretical > start_time else 1.0
+        else:
+            lt90_elapsed = np.nan
     else:
         lt50_elapsed = np.nan
         lt90_elapsed = np.nan
 
-    # Incubator environmental conditions (strictly excluding outdoor/outside columns)
+    # Incubator environmental conditions (strictly excluding outdoor/outside columns, auto-cleaning Excel times)
     incubator_temp_col = get_incubator_temp_col(df_copy.columns)
     incubator_humid_col = get_incubator_humidity_col(df_copy.columns)
     temp_val = np.nan
     humid_val = np.nan
+
+    def _parse_env_num(v):
+        if pd.isna(v):
+            return np.nan
+        s = str(v).strip()
+        if not s or s.lower() in ['nan', 'none', 'null', '-']:
+            return np.nan
+        if ':' in s:
+            parts = s.split(':')
+            try:
+                return float(parts[0]) + (float(parts[1]) / 60.0 if len(parts) > 1 else 0.0)
+            except Exception:
+                pass
+        try:
+            return float(s)
+        except Exception:
+            return np.nan
+
     if incubator_temp_col:
         try:
-            temp_val = float(pd.to_numeric(df_copy[incubator_temp_col], errors='coerce').mean())
+            clean_temp_s = df_copy[incubator_temp_col].apply(_parse_env_num)
+            temp_val = float(clean_temp_s.dropna().mean()) if not clean_temp_s.dropna().empty else np.nan
         except Exception:
             pass
     if incubator_humid_col:
         try:
-            humid_val = float(pd.to_numeric(df_copy[incubator_humid_col], errors='coerce').mean())
+            clean_hum_s = df_copy[incubator_humid_col].apply(_parse_env_num)
+            humid_val = float(clean_hum_s.dropna().mean()) if not clean_hum_s.dropna().empty else np.nan
         except Exception:
             pass
 
@@ -347,9 +411,12 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
                 'treatment': treatment_val
             })
 
-    # Extract complete batch consumption matrix and daily progression
+    # Extract complete batch consumption matrix and daily progression (both Sucrose and Treatment solution)
     cons_matrix = []
     cons_cols = []
+    tcons_matrix = []
+    tcons_cols = []
+
     if len(bee_cols) > 0:
         for idx_b, bc in enumerate(bee_cols):
             c_matched = find_matching_cons_col(df_copy.columns, bc)
@@ -361,7 +428,17 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
                 cons_matrix.append([0.0] * num_days)
                 cons_cols.append(f"Cons {bc} (µL)")
 
+            tc_matched = find_matching_tcons_col(df_copy.columns, bc)
+            if tc_matched:
+                raw_tc = pd.to_numeric(df_copy[tc_matched], errors='coerce').fillna(0.0).tolist()
+                tcons_matrix.append(raw_tc)
+                tcons_cols.append(tc_matched)
+            else:
+                tcons_matrix.append([0.0] * num_days)
+                tcons_cols.append(f"TCons {bc} (µL)")
+
     has_consumption = any(any(v > 0 for v in b_c) for b_c in cons_matrix) if cons_matrix else False
+    has_tconsumption = any(any(v > 0 for v in b_tc) for b_tc in tcons_matrix) if tcons_matrix else False
 
     daily_all_cons = []
     daily_mean_cons = []
@@ -369,7 +446,14 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
     daily_alive_mean_cons = []
     daily_alive_sem_cons = []
 
+    daily_all_tcons = []
+    daily_mean_tcons = []
+    daily_sem_tcons = []
+    daily_alive_mean_tcons = []
+    daily_alive_sem_tcons = []
+
     for d_idx in range(num_days):
+        # Normal Sucrose Consumption
         day_vals = [cons_matrix[b_idx][d_idx] for b_idx in range(len(cons_matrix))] if cons_matrix else []
         daily_all_cons.append(day_vals)
         if day_vals:
@@ -390,11 +474,37 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
         daily_alive_mean_cons.append(al_m)
         daily_alive_sem_cons.append(al_sem)
 
+        # Treatment Solution Consumption (TCons)
+        tday_vals = [tcons_matrix[b_idx][d_idx] for b_idx in range(len(tcons_matrix))] if tcons_matrix else []
+        daily_all_tcons.append(tday_vals)
+        if tday_vals:
+            tm_val = float(np.mean(tday_vals))
+            tsem_val = float(np.std(tday_vals) / np.sqrt(len(tday_vals))) if len(tday_vals) > 1 else 0.0
+        else:
+            tm_val, tsem_val = 0.0, 0.0
+        daily_mean_tcons.append(tm_val)
+        daily_sem_tcons.append(tsem_val)
+
+        if alive_indices and tcons_matrix:
+            alive_tday_vals = [tcons_matrix[b_idx][d_idx] for b_idx in alive_indices]
+            tal_m = float(np.mean(alive_tday_vals))
+            tal_sem = float(np.std(alive_tday_vals) / np.sqrt(len(alive_tday_vals))) if len(alive_tday_vals) > 1 else 0.0
+        else:
+            tal_m, tal_sem = 0.0, 0.0
+        daily_alive_mean_tcons.append(tal_m)
+        daily_alive_sem_tcons.append(tal_sem)
+
     daily_mean_cons = np.array(daily_mean_cons)
     daily_sem_cons = np.array(daily_sem_cons)
     daily_alive_mean_cons = np.array(daily_alive_mean_cons)
     daily_alive_sem_cons = np.array(daily_alive_sem_cons)
     cumulative_mean_cons = np.cumsum(daily_mean_cons) if len(daily_mean_cons) > 0 else np.array([])
+
+    daily_mean_tcons = np.array(daily_mean_tcons)
+    daily_sem_tcons = np.array(daily_sem_tcons)
+    daily_alive_mean_tcons = np.array(daily_alive_mean_tcons)
+    daily_alive_sem_tcons = np.array(daily_alive_sem_tcons)
+    cumulative_mean_tcons = np.cumsum(daily_mean_tcons) if len(daily_mean_tcons) > 0 else np.array([])
 
     # Calculate full default LT spectrum
     default_lt_records = calculate_lt_percentiles(
@@ -440,7 +550,16 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
         'daily_alive_mean_cons': daily_alive_mean_cons,
         'daily_alive_sem_cons': daily_alive_sem_cons,
         'cumulative_mean_cons': cumulative_mean_cons,
-        'has_consumption': has_consumption
+        'has_consumption': has_consumption,
+        'has_tconsumption': has_tconsumption,
+        'tcons_matrix': tcons_matrix,
+        'tcons_cols': tcons_cols,
+        'daily_all_tcons': daily_all_tcons,
+        'daily_mean_tcons': daily_mean_tcons,
+        'daily_sem_tcons': daily_sem_tcons,
+        'daily_alive_mean_tcons': daily_alive_mean_tcons,
+        'daily_alive_sem_tcons': daily_alive_sem_tcons,
+        'cumulative_mean_tcons': cumulative_mean_tcons
     }
 
 

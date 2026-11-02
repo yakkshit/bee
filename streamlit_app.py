@@ -1,5 +1,16 @@
 # Bee Analytics Studio Main Application
+import sys
+import logging
 import streamlit as st
+
+# Suppress stale browser media cache warning spam (MediaFileHandler)
+logging.getLogger("streamlit.web.server.media_file_handler").setLevel(logging.ERROR)
+logging.getLogger("tornado.access").setLevel(logging.ERROR)
+
+# Automatically ensure newest module code loads without stale bytecode
+for _m in list(sys.modules.keys()):
+    if _m == 'modules' or _m.startswith('modules.'):
+        del sys.modules[_m]
 from modules.styles import (
     inject_custom_styles,
     render_sidebar_controls,

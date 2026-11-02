@@ -21,7 +21,7 @@ def render_hazard_ratio_forest_plot(table_rows, group_col='cohort', key_suffix: 
         return
 
     st.markdown("#### 🌲 Hazard Ratio Forest Plot (95% CI Uncertainty)")
-    fig_fp, ax_fp = plt.subplots(figsize=(8.8, max(3.6, len(table_rows) * 0.75 + 1.2)), dpi=140)
+    fig_fp, ax_fp = plt.subplots(figsize=(8.8, max(3.6, len(table_rows) * 0.75 + 1.2)), dpi=300)
     ax_fp.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='x', zorder=1)
 
     y_pos = np.arange(len(table_rows))[::-1]

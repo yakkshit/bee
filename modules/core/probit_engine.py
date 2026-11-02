@@ -28,20 +28,30 @@ def calculate_lt_percentiles(intercept_a, slope_b, start_time=1.0, times_numeric
         p_ratio = np.clip(p / 100.0, 1e-4, 1.0 - 1e-4)
         probit_score = float(norm.ppf(p_ratio) + 5.0)
 
-        # Theoretical Probit OLS estimate
-        if slope_b > 0:
-            theo_lt = float(10.0 ** ((probit_score - intercept_a) / slope_b))
-            if np.isfinite(theo_lt) and theo_lt > 0:
-                if theo_lt <= start_time:
-                    theo_elapsed = max(0.1, theo_lt)
-                    theo_elapsed_int = 1
-                else:
-                    theo_elapsed = theo_lt - start_time
-                    theo_elapsed_int = max(1, int(np.ceil(theo_elapsed)))
-            else:
+        # Theoretical Probit OLS estimate (with overflow guard)
+        if slope_b > 1e-6:
+            exponent = (probit_score - intercept_a) / slope_b
+            if exponent > 4.0:  # > 10,000 days, well beyond acute bioassay horizon
                 theo_lt = np.nan
                 theo_elapsed = np.nan
                 theo_elapsed_int = np.nan
+            else:
+                try:
+                    theo_lt = float(10.0 ** exponent)
+                except OverflowError:
+                    theo_lt = np.nan
+
+                if np.isfinite(theo_lt) and theo_lt > 0:
+                    if theo_lt <= start_time:
+                        theo_elapsed = max(0.1, theo_lt)
+                        theo_elapsed_int = 1
+                    else:
+                        theo_elapsed = theo_lt - start_time
+                        theo_elapsed_int = max(1, int(np.ceil(theo_elapsed)))
+                else:
+                    theo_lt = np.nan
+                    theo_elapsed = np.nan
+                    theo_elapsed_int = np.nan
         else:
             theo_lt = np.nan
             theo_elapsed = np.nan
@@ -52,6 +62,9 @@ def calculate_lt_percentiles(intercept_a, slope_b, start_time=1.0, times_numeric
         emp_elapsed = np.nan
         emp_elapsed_int = np.nan
         reached = False
+
+        max_trial_time = float(times_numeric[-1]) if (times_numeric is not None and len(times_numeric) > 0 and np.isfinite(times_numeric[-1])) else 6.0
+        max_obs_mort = float(max(mortality_pct)) if (mortality_pct is not None and len(mortality_pct) > 0) else 0.0
 
         if times_numeric is not None and mortality_pct is not None and len(times_numeric) > 0 and len(mortality_pct) > 0:
             t_arr = np.array(times_numeric, dtype=float)
@@ -74,26 +87,31 @@ def calculate_lt_percentiles(intercept_a, slope_b, start_time=1.0, times_numeric
                         m_prev = float(m_arr[idx - 1])
                         m_curr = float(m_arr[idx])
 
-                        if m_curr > m_prev:
-                            emp_lt = t_prev + ((p - m_prev) / (m_curr - m_prev)) * (t_curr - t_prev)
-                        else:
-                            emp_lt = t_curr
+                        if np.isfinite(t_prev) and np.isfinite(t_curr):
+                            if m_curr > m_prev:
+                                emp_lt = t_prev + ((p - m_prev) / (m_curr - m_prev)) * (t_curr - t_prev)
+                            else:
+                                emp_lt = t_curr
 
-                        emp_elapsed = max(0.1, emp_lt - start_time)
-                        emp_elapsed_int = max(1, int(np.ceil(emp_elapsed)))
-                        reached = True
-                        break
+                            emp_elapsed = max(0.1, emp_lt - start_time)
+                            emp_elapsed_int = max(1, int(np.ceil(emp_elapsed)))
+                            reached = True
+                            break
 
-        # Effective elapsed days: prefer empirical observation if reached, fallback to theoretical model
-        if np.isfinite(emp_elapsed_int):
+        # Effective elapsed days: prefer empirical observation if reached
+        # Fallback to theoretical model ONLY if extrapolation is biologically reasonable (<= 2x trial duration and max mort >= 0.5 * target)
+        if reached and np.isfinite(emp_elapsed_int):
             effective_elapsed_int = emp_elapsed_int
             status_desc = f"Observed ({emp_elapsed:.1f}d)"
-        elif np.isfinite(theo_elapsed_int):
+        elif np.isfinite(theo_elapsed_int) and theo_elapsed <= max(14.0, max_trial_time * 2.0) and max_obs_mort >= (p * 0.5):
             effective_elapsed_int = theo_elapsed_int
             status_desc = f"Probit Model ({theo_elapsed:.1f}d)"
         else:
             effective_elapsed_int = np.nan
-            status_desc = "Not Reached"
+            if max_obs_mort < p:
+                status_desc = f"> {int(round(max_trial_time))}d (Not Reached)"
+            else:
+                status_desc = "Not Reached"
 
         results.append({
             'percentile': p,

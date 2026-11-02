@@ -85,6 +85,48 @@ def get_dataset_key_or_filename(raw_name: str, df=None) -> str:
     return str(raw_name).strip() if raw_name else "Dataset"
 
 
+def resolve_treatment_string(t_val: str) -> str:
+    """
+    Parses a single treatment string (e.g. '5% Acetone 2ml', '5ml, 5% Acetone', 'Sucrose 2ml')
+    to an agreed standard cohort name, or returns COHORT_BLINDED if unknown/none/blinded.
+    """
+    s = str(t_val).strip().lower()
+    if not s or any(k in s for k in ['none', 'blind', 'unknown', 'nan', 'null', 'temp']):
+        return COHORT_BLINDED
+    if any(k in s for k in ['sucrose', 'control', 'water', 'ctrl', '0um']):
+        return COHORT_SUCROSE_2UL
+    if '10' in s and ('acetone' in s or '%' in s or 'um' in s):
+        return COHORT_ACETONE_10PCT_2UL
+    if '5' in s and ('acetone' in s or '%' in s or 'um' in s):
+        # Explicit volume 5 check
+        if any(v in s for v in ['5ml', '5 ml', '5ul', '5 ul', '5 microliter', '5_ul', '50um']):
+            return COHORT_ACETONE_5PCT_5UL
+        # Explicit volume 2 check
+        if any(v in s for v in ['2ml', '2 ml', '2ul', '2 ul', '2 microliter', '2_ul']):
+            return COHORT_ACETONE_5PCT_2UL
+        nums = re.findall(r'\b5\b|5%', s)
+        if len(nums) >= 2 or s.count('5') >= 2:
+            return COHORT_ACETONE_5PCT_5UL
+        return COHORT_ACETONE_5PCT_2UL
+    return ""
+
+
+def clean_display_name(raw_name: str, df=None) -> str:
+    """
+    Returns a clean, title-cased display label based on key (if non-empty) or file name.
+    Example: 'FM_261001_01A.csv' -> 'Fm 261001 01A'
+    """
+    key_val = extract_key_from_df(df)
+    if key_val:
+        s = key_val
+    else:
+        s = os.path.basename(str(raw_name).strip()) if raw_name else "Dataset"
+    s_clean = re.sub(r"\.(csv|tsv|txt|xlsx)$", "", s, flags=re.IGNORECASE)
+    s_clean = re.sub(r"^(sample_|batch_|file_|data_)", "", s_clean, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[_\-]+", " ", s_clean).strip()
+    return cleaned.title() if cleaned else str(raw_name)
+
+
 def clean_cohort_name(raw_name: str, df=None, fallback_to_blinded: bool = False) -> str:
     """
     Intelligently cleans and maps raw filenames or user inputs to the agreed standard cohort name.
@@ -94,6 +136,16 @@ def clean_cohort_name(raw_name: str, df=None, fallback_to_blinded: bool = False)
     If there is no key value, uses the file name.
     If fallback_to_blinded is True and no known treatment matches, returns COHORT_BLINDED.
     """
+    # 1. Check DataFrame's 'Treatment' column first if available
+    if df is not None and isinstance(df, pd.DataFrame):
+        for col in df.columns:
+            if str(col).strip().lower() in ['treatment', 'temp_treatment', 'temptreatment']:
+                t_vals = [str(x).strip() for x in df[col].dropna() if str(x).strip() and str(x).strip().lower() not in ['nan', 'none', 'null', '']]
+                for tv in t_vals[:5]:
+                    resolved = resolve_treatment_string(tv)
+                    if resolved and resolved != COHORT_BLINDED:
+                        return resolved
+
     # Check if df contains a non-empty key value
     key_val = extract_key_from_df(df)
     effective_name = key_val if key_val else raw_name
@@ -104,22 +156,6 @@ def clean_cohort_name(raw_name: str, df=None, fallback_to_blinded: bool = False)
     # Check for explicit blinded indicator
     if str(effective_name).strip() in [COHORT_BLINDED, "None", "None / Blinded", "Blinded (Unknown)", "Blinded"]:
         return COHORT_BLINDED
-
-    # 1. Check DataFrame's 'Treatment' column first if available
-    if df is not None and isinstance(df, pd.DataFrame) and 'Treatment' in df.columns:
-        t_vals = [str(x).strip().lower() for x in df['Treatment'].dropna() if str(x).strip()]
-        if t_vals:
-            t_str = " ".join(t_vals[:5])
-            if any(k in t_str for k in ["none", "blind", "unknown", "nan"]):
-                return COHORT_BLINDED
-            if "10" in t_str and ("acetone" in t_str or "%" in t_str):
-                return COHORT_ACETONE_10PCT_2UL
-            if "5" in t_str and ("5ul" in t_str or "5 microliter" in t_str or "5_ul" in t_str or t_str.count("5") >= 2):
-                return COHORT_ACETONE_5PCT_5UL
-            if "5" in t_str and ("2" in t_str or "acetone" in t_str or "2ul" in t_str):
-                return COHORT_ACETONE_5PCT_2UL
-            if any(k in t_str for k in ["sucrose", "control", "water", "ctrl", "0um"]):
-                return COHORT_SUCROSE_2UL
 
     s = str(effective_name).strip() if effective_name else ""
 
@@ -134,14 +170,16 @@ def clean_cohort_name(raw_name: str, df=None, fallback_to_blinded: bool = False)
     if s and (os.path.isfile(s) or os.path.isfile(os.path.join(".", s))):
         f_path = s if os.path.isfile(s) else os.path.join(".", s)
         try:
-            peek_df = pd.read_csv(f_path, nrows=2)
-            if 'Treatment' in peek_df.columns:
-                return clean_cohort_name(raw_name, df=peek_df, fallback_to_blinded=fallback_to_blinded)
+            peek_df = pd.read_csv(f_path, nrows=5)
+            for c in peek_df.columns:
+                if str(c).strip().lower() in ['treatment', 'temp_treatment', 'temptreatment']:
+                    return clean_cohort_name(raw_name, df=peek_df, fallback_to_blinded=fallback_to_blinded)
         except Exception:
             pass
 
     # Remove extensions and file prefixes
-    s_clean = re.sub(r"\.(csv|tsv|txt|xlsx)$", "", s, flags=re.IGNORECASE)
+    s_base = os.path.basename(s)
+    s_clean = re.sub(r"\.(csv|tsv|txt|xlsx)$", "", s_base, flags=re.IGNORECASE)
     s_clean = re.sub(r"^(sample_|batch_|file_|data_)", "", s_clean, flags=re.IGNORECASE)
     s_clean_lower = s_clean.lower()
 
@@ -156,8 +194,8 @@ def clean_cohort_name(raw_name: str, df=None, fallback_to_blinded: bool = False)
     if "10" in s_clean_lower and ("acetone" in s_clean_lower or "%" in s_clean_lower or "um" in s_clean_lower):
         return COHORT_ACETONE_10PCT_2UL
 
-    # Match 5 % acetone 5 microliter (check 5ul or 50um or two 5s)
-    if ("5" in s_clean_lower and ("5ul" in s_clean_lower or "5_ul" in s_clean_lower or "5 microliter" in s_clean_lower or "50um" in s_clean_lower)) or (s_clean_lower.count("5") >= 2):
+    # Match 5 % acetone 5 microliter
+    if ("5" in s_clean_lower and ("5ul" in s_clean_lower or "5_ul" in s_clean_lower or "5 microliter" in s_clean_lower or "50um" in s_clean_lower)) or (s_clean_lower.count("5") >= 2 and "2" not in s_clean_lower):
         return COHORT_ACETONE_5PCT_5UL
 
     # Match 5 % acetone 2 microliter

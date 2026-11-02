@@ -57,6 +57,8 @@ def parse_time_data(df):
 
     def parse_to_days(t_str):
         t_str = str(t_str).strip()
+        if t_str.lower() in ['nan', 'none', '', 'null', 'undefined']:
+            return None
         match = re.match(r"(?:Day|Dy|D)?\s*(\d+)(?:_(\d+)(?::(\d+))?)?", t_str, re.IGNORECASE)
         if match and match.group(1):
             d = int(match.group(1))
@@ -72,19 +74,25 @@ def parse_time_data(df):
                 m = 0
             return d + (h / 24.0) + (m / 1440.0)
         try:
-            return float(t_str)
+            val = float(t_str)
+            return val if np.isfinite(val) else None
         except ValueError:
             return None
 
     numeric_times = []
+    repaired_labels = []
     current_day = 1.0
-    for t in raw_times:
-        parsed = parse_to_days(t)
+    for idx, t in enumerate(raw_times):
+        t_clean = str(t).strip()
+        parsed = parse_to_days(t_clean)
         if parsed is not None:
             current_day = parsed
             numeric_times.append(current_day)
+            repaired_labels.append(t_clean if t_clean and t_clean.lower() != 'nan' else f"Day {int(round(current_day))}")
+            current_day += 1.0
         else:
             numeric_times.append(current_day)
+            repaired_labels.append(f"Day {int(round(current_day))}")
             current_day += 1.0
 
-    return np.array(numeric_times), raw_times, time_col_name
+    return np.array(numeric_times, dtype=float), repaired_labels, time_col_name

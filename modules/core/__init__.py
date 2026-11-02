@@ -7,19 +7,23 @@ from modules.core.time_parser import DEFAULT_CSV, parse_time_data, filter_post_s
 from modules.core.probit_engine import calculate_lt_percentiles
 from modules.core.bee_extractor import extract_individual_bee_survival
 from modules.core.batch_parser import parse_batch_df, standardize_observation_df
+from modules.core.csv_auditor import audit_single_dataframe, audit_batch_collection, render_csv_diagnostics_banner
 from modules.core.cohort_manager import (
     AGREED_COHORTS,
     COHORT_CODE_NAMES,
     COHORT_PALETTE,
     COHORT_MARKERS,
     clean_cohort_name,
+    clean_display_name,
+    resolve_treatment_string,
     get_cohort_code,
     get_default_4_cohort_dataframes,
     get_active_cohort_dictionary,
     COHORT_SUCROSE_2UL,
     COHORT_ACETONE_5PCT_2UL,
     COHORT_ACETONE_10PCT_2UL,
-    COHORT_ACETONE_5PCT_5UL
+    COHORT_ACETONE_5PCT_5UL,
+    COHORT_BLINDED
 )
 
 __all__ = [
@@ -31,17 +35,23 @@ __all__ = [
     'extract_individual_bee_survival',
     'parse_batch_df',
     'standardize_observation_df',
+    'audit_single_dataframe',
+    'audit_batch_collection',
+    'render_csv_diagnostics_banner',
     'AGREED_COHORTS',
     'COHORT_CODE_NAMES',
     'COHORT_PALETTE',
     'COHORT_MARKERS',
     'clean_cohort_name',
+    'clean_display_name',
+    'resolve_treatment_string',
     'get_cohort_code',
     'get_default_4_cohort_dataframes',
     'get_active_cohort_dictionary',
     'COHORT_SUCROSE_2UL',
     'COHORT_ACETONE_5PCT_2UL',
     'COHORT_ACETONE_10PCT_2UL',
-    'COHORT_ACETONE_5PCT_5UL'
+    'COHORT_ACETONE_5PCT_5UL',
+    'COHORT_BLINDED'
 ]
 

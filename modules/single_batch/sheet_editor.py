@@ -113,9 +113,12 @@ def render_observation_sheet_editor():
         st.session_state['user_uploaded_files'] = set()
 
     # Clean out any non-user-uploaded datasets (e.g. previously auto-injected workspace files)
-    for k in list(st.session_state['uploaded_file_dict'].keys()):
-        if k not in st.session_state['user_uploaded_files']:
-            del st.session_state['uploaded_file_dict'][k]
+    upload_dict = st.session_state.get('uploaded_file_dict', {})
+    user_files = st.session_state.get('user_uploaded_files', set())
+    for k in list(upload_dict.keys()):
+        if k not in user_files:
+            del upload_dict[k]
+    st.session_state['uploaded_file_dict'] = upload_dict
 
     if 'df' not in st.session_state:
         if os.path.exists(CACHE_FILE):
@@ -187,14 +190,15 @@ def render_observation_sheet_editor():
         del st.session_state['tab1_upload_sig']
 
     # If any files are in uploaded_file_dict, display selector to choose active sheet
-    if st.session_state.get('uploaded_file_dict'):
-        f_keys = list(st.session_state['uploaded_file_dict'].keys())
+    upload_dict_view = st.session_state.get('uploaded_file_dict', {})
+    if upload_dict_view:
+        f_keys = list(upload_dict_view.keys())
         cur_active = st.session_state.get('active_sheet_key', f_keys[0])
         if cur_active not in f_keys:
             cur_active = f_keys[0]
 
         def format_sheet_option(k):
-            c_lbl, c_df = st.session_state['uploaded_file_dict'][k]
+            c_lbl, c_df = upload_dict_view[k]
             k_val = extract_key_from_df(c_df)
             code = get_cohort_code(c_lbl)
             if k_val:
@@ -210,7 +214,7 @@ def render_observation_sheet_editor():
         )
         if active_f != st.session_state.get('active_sheet_key'):
             st.session_state['active_sheet_key'] = active_f
-            st.session_state['df'] = st.session_state['uploaded_file_dict'][active_f][1].copy()
+            st.session_state['df'] = upload_dict_view[active_f][1].copy()
             st.session_state['editor_version'] = st.session_state.get('editor_version', 0) + 1
             st.session_state['df'].to_csv(CACHE_FILE, index=False)
             st.rerun()

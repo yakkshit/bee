@@ -55,7 +55,7 @@ def render_single_survival_curves(computed, settings=None, image_collector=None)
     if num_days > 0:
         with c1:
             st.subheader("Logistic Mortality Curve")
-            fig1, ax = plt.subplots(figsize=(7.0, 5.2), dpi=140)
+            fig1, ax = plt.subplots(figsize=(7.0, 5.2), dpi=300)
             fit_se = np.std(residuals_mort)
             ax.fill_between(t_dense, np.clip(fit_mort_curve - 1.96 * fit_se, 0, 100), np.clip(fit_mort_curve + 1.96 * fit_se, 0, 100), color=primary_color, alpha=0.12, label='95% Confidence Band')
             ax.plot(t_dense, fit_mort_curve, color=primary_color, linewidth=line_width, linestyle=line_style, label='Logistic Model Fit')
@@ -79,7 +79,7 @@ def render_single_survival_curves(computed, settings=None, image_collector=None)
 
         with c2:
             st.subheader("Survival Decay Curve")
-            fig2, ax = plt.subplots(figsize=(7.0, 5.2), dpi=140)
+            fig2, ax = plt.subplots(figsize=(7.0, 5.2), dpi=300)
             surv_se_fit = np.std(residuals_surv)
             ax.fill_between(t_dense, np.clip(fit_surv_curve - 1.96 * surv_se_fit, 0, 100), np.clip(fit_surv_curve + 1.96 * surv_se_fit, 0, 100), color=secondary_color, alpha=0.15, label='95% Confidence Band')
             ax.plot(t_dense, fit_surv_curve, color=secondary_color, linewidth=line_width, linestyle=line_style, label='Survival Model Fit')
@@ -104,7 +104,7 @@ def render_single_survival_curves(computed, settings=None, image_collector=None)
     if len(durations) > 0:
         with c1:
             st.subheader("Kaplan-Meier Survival Analysis")
-            fig3, ax = plt.subplots(figsize=(8.0, 5.2), dpi=140)
+            fig3, ax = plt.subplots(figsize=(7.0, 5.2), dpi=300)
             km_timeline = kmf.survival_function_.index
             km_vals = kmf.survival_function_['KM_estimate'].values
             ci_df = kmf.confidence_interval_survival_function_
@@ -123,7 +123,7 @@ def render_single_survival_curves(computed, settings=None, image_collector=None)
             ax.set_xticklabels(day_labels, rotation=45, ha="right")
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+            ax.legend(loc='lower left', frameon=False, fontsize=10.0)
             fig3.tight_layout()
             st.pyplot(fig3)
             if image_collector:
@@ -131,7 +131,7 @@ def render_single_survival_curves(computed, settings=None, image_collector=None)
 
         with c2:
             st.subheader("Abbott Corrected Mortality Curve")
-            fig_abbott, ax_abbott = plt.subplots(figsize=(7.0, 5.2), dpi=140)
+            fig_abbott, ax_abbott = plt.subplots(figsize=(7.0, 5.2), dpi=300)
             ax_abbott.plot(elapsed_days, abbott_corrected_pct, color=primary_color, marker='o', linewidth=line_width, linestyle=line_style, markersize=marker_size)
             ax_abbott.set_xlabel('Observation Time / Days', fontsize=12, fontweight='bold', labelpad=7)
             ax_abbott.set_ylabel('Corrected Mortality / %', fontsize=12, fontweight='bold', labelpad=7)

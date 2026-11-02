@@ -43,12 +43,35 @@ test*.pdf
 *.HEIC
 *.bin
 
-# Temporary plot outputs (keep sample data)
+# Temporary plot and archive outputs (keep sample data)
 *.png
 *.pdf
+*.zip
+*.tar.gz
 !sample_data/*.png
 !sample_data/*.pdf
 
 # CSV files: ignore dynamic exports and caches, but preserve benchmark sample data
 *.csv
 !2026-30_export.csv
+
+# Temporary backups, reference dumps, and test directories
+18-10-2026*/
+*-2026*/
+backup*/
+temp*/
+scratch/
+
+# Environment variables
+.env
+.env.local
+.env.*
+
+# Logs & testing caches
+*.log
+logs/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+*.egg-info/

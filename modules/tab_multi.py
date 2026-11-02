@@ -13,6 +13,7 @@ from modules.parser import (
     parse_batch_df,
     calculate_lt_percentiles,
     clean_cohort_name,
+    clean_display_name,
     get_cohort_code,
     get_default_4_cohort_dataframes,
     standardize_observation_df,
@@ -61,9 +62,12 @@ def render_multi_batch_tab(settings=None):
     if 'user_uploaded_files' not in st.session_state:
         st.session_state['user_uploaded_files'] = set()
 
-    for k in list(st.session_state['uploaded_file_dict'].keys()):
-        if k not in st.session_state['user_uploaded_files']:
-            del st.session_state['uploaded_file_dict'][k]
+    up_dict = st.session_state.get('uploaded_file_dict', {})
+    user_files = st.session_state.get('user_uploaded_files', set())
+    for k in list(up_dict.keys()):
+        if k not in user_files:
+            del up_dict[k]
+    st.session_state['uploaded_file_dict'] = up_dict
 
     col_up_main, col_up_clear = st.columns([3.8, 1.2])
     with col_up_main:
@@ -134,6 +138,12 @@ def render_multi_batch_tab(settings=None):
             def_fname = default_cohort_filenames.get(c_name, f"{c_name.replace(' ', '_')}.csv")
             raw_batch_dict[def_fname] = c_df
 
+    # CSV Data Quality & Bioassay Diagnostics Banner
+    from modules.core.csv_auditor import audit_batch_collection, render_csv_diagnostics_banner
+    multi_diagnostics = audit_batch_collection(raw_batch_dict)
+    if multi_diagnostics:
+        render_csv_diagnostics_banner(multi_diagnostics, container_key="tab2_csv_audit")
+
     if raw_batch_dict:
         MARKER_OPTIONS = {
             "Circle (●)": "o",
@@ -183,7 +193,7 @@ def render_multi_batch_tab(settings=None):
             with col_ctrl1:
                 jitter_val = st.slider("Point Separation / Anti-Overlap Offset", min_value=0.0, max_value=0.05, value=0.015, step=0.003, help="Offsets data points horizontally side-by-side so markers from different CSV files don't overlap directly on top of each other.")
             with col_ctrl2:
-                legend_loc_opt = st.selectbox("Legend Placement", ["Right (Outside)", "Top (Horizontal)", "Bottom (Horizontal)"], index=0)
+                legend_loc_opt = st.selectbox("Legend Placement", ["Top (Horizontal)", "Bottom (Horizontal)", "Right (Outside)"], index=0)
             with col_ctrl3:
                 show_grid = st.checkbox("Show Chart Gridlines", value=True)
 
@@ -228,23 +238,29 @@ def render_multi_batch_tab(settings=None):
 
                     # Auto-compute label based on selected legend format
                     is_blinded = (cohort_choice == COHORT_BLINDED or cohort_choice == "None")
+                    clean_name = clean_display_name(key_or_file, b_df)
                     if legend_format == "Key / File Name (Default / Blinded Study Mode)":
-                        auto_label = key_or_file
+                        auto_label = clean_name
                     elif legend_format == "Treatment Solution (Short Code, e.g. 5% Acetone 2 µL)":
-                        auto_label = active_code if not is_blinded else key_or_file
+                        auto_label = active_code if not is_blinded else clean_name
                     elif legend_format == "Treatment Solution (Full Protocol Name)":
-                        auto_label = cohort_choice if not is_blinded else key_or_file
+                        auto_label = cohort_choice if not is_blinded else clean_name
                     elif legend_format == "Key / File Name + Treatment Solution":
-                        auto_label = f"{key_or_file} ({active_code})" if not is_blinded else key_or_file
+                        auto_label = f"{clean_name} ({active_code})" if not is_blinded else clean_name
                     else:
-                        auto_label = key_or_file
+                        auto_label = clean_name
 
                     custom_label = st.text_input("Display Label (Plot Legend)", value=auto_label, key=f"bname_{idx}_{legend_format}")
 
-                    default_c = COHORT_PALETTE.get(cohort_choice, DEFAULT_COLORS[idx % len(DEFAULT_COLORS)])
+                    if cohort_choice in AGREED_COHORTS:
+                        default_c = COHORT_PALETTE[cohort_choice]
+                        pref_marker = COHORT_MARKERS[cohort_choice]
+                    else:
+                        default_c = DEFAULT_COLORS[idx % len(DEFAULT_COLORS)]
+                        pref_marker = list(MARKER_OPTIONS.values())[idx % len(MARKER_OPTIONS)]
+
                     custom_color = st.color_picker("Color", default_c, key=f"bcol_{idx}")
 
-                    pref_marker = COHORT_MARKERS.get(cohort_choice, None)
                     pref_shape_name = next((k for k, v in MARKER_OPTIONS.items() if v == pref_marker), None) if pref_marker else None
                     default_shape_idx = marker_names.index(pref_shape_name) if pref_shape_name in marker_names else (idx % len(marker_names))
                     custom_shape_name = st.selectbox("Shape (Marker)", marker_names, index=default_shape_idx, key=f"bshape_{idx}")
@@ -314,7 +330,7 @@ def render_multi_batch_tab(settings=None):
 
         # 1. Probit Regression CSV File Comparison Plot
         st.subheader("1. Probit Regression Time-Mortality Comparison Across CSV Files")
-        fig_p_multi, ax_p = plt.subplots(figsize=(10.5, 6.0), dpi=140)
+        fig_p_multi, ax_p = plt.subplots(figsize=(10.5, 6.0), dpi=300)
 
         if show_grid:
             ax_p.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
@@ -342,14 +358,12 @@ def render_multi_batch_tab(settings=None):
             )
 
             if len(b['log_time']) > 1:
-                y_raw = b['intercept_a'] + b['slope_b'] * x_fit_line
-                valid_mask = (y_raw >= 2.5) & (y_raw <= 9.2)
-                if np.any(valid_mask):
-                    ax_p.plot(
-                        x_fit_line[valid_mask], y_raw[valid_mask],
-                        color=b['color'], linestyle=b['linestyle'], linewidth=line_width,
-                        zorder=3
-                    )
+                y_fit_line = b['intercept_a'] + b['slope_b'] * x_fit_line
+                ax_p.plot(
+                    x_fit_line, y_fit_line,
+                    color=b['color'], linestyle=b['linestyle'], linewidth=line_width,
+                    zorder=3
+                )
 
             if "Equation + R²" in legend_detail:
                 lbl = f"{b['name']} (Y={b['intercept_a']:.2f}+{b['slope_b']:.2f}x, R²={b['r_squared']:.4f})"
@@ -424,7 +438,7 @@ def render_multi_batch_tab(settings=None):
         # 2. Mortality % Comparison
         with cols_m[0]:
             st.subheader("2. Mortality Curve Comparison")
-            fig_m_multi, ax_m = plt.subplots(figsize=(7.5, 5.2), dpi=140)
+            fig_m_multi, ax_m = plt.subplots(figsize=(7.5, 5.2), dpi=300)
             if show_grid:
                 ax_m.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
@@ -452,17 +466,16 @@ def render_multi_batch_tab(settings=None):
             ax_m.spines['top'].set_visible(False)
             ax_m.spines['right'].set_visible(False)
 
-            if legend_loc_opt == "Top (Horizontal)":
-                ax_m.legend(handles=m_handles, loc='lower center', bbox_to_anchor=(0.5, 1.02),
-                            ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
-                fig_m_multi.tight_layout()
+            if legend_loc_opt == "Right (Outside)":
+                ax_m.legend(handles=m_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_m_multi.tight_layout(rect=[0, 0, 0.72, 1.0])
             elif legend_loc_opt == "Bottom (Horizontal)":
                 ax_m.legend(handles=m_handles, loc='upper center', bbox_to_anchor=(0.5, -0.18),
                             ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
                 fig_m_multi.tight_layout()
             else:
-                ax_m.legend(handles=m_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
-                fig_m_multi.tight_layout(rect=[0, 0, 0.75, 1.0])
+                ax_m.legend(handles=m_handles, loc='upper left', frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_m_multi.tight_layout()
 
             st.pyplot(fig_m_multi)
 
@@ -476,7 +489,7 @@ def render_multi_batch_tab(settings=None):
         with cols_m[1]:
             st.subheader("3. Survival Curve Comparison")
             st.caption("Observed survival percentage across observation days. For formal non-parametric Kaplan–Meier step curves with censoring, Greenwood CI, Log-Rank tests, and Cox regression, see Section 5 below.")
-            fig_s_multi, ax_s = plt.subplots(figsize=(8.0, 5.2), dpi=140)
+            fig_s_multi, ax_s = plt.subplots(figsize=(7.5, 5.2), dpi=300)
             if show_grid:
                 ax_s.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
@@ -504,17 +517,16 @@ def render_multi_batch_tab(settings=None):
             ax_s.spines['top'].set_visible(False)
             ax_s.spines['right'].set_visible(False)
 
-            if legend_loc_opt == "Top (Horizontal)":
-                ax_s.legend(handles=s_handles, loc='lower center', bbox_to_anchor=(0.5, 1.02),
-                            ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
-                fig_s_multi.tight_layout()
+            if legend_loc_opt == "Right (Outside)":
+                ax_s.legend(handles=s_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_s_multi.tight_layout(rect=[0, 0, 0.72, 1.0])
             elif legend_loc_opt == "Bottom (Horizontal)":
                 ax_s.legend(handles=s_handles, loc='upper center', bbox_to_anchor=(0.5, -0.18),
                             ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
                 fig_s_multi.tight_layout()
             else:
-                ax_s.legend(handles=s_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
-                fig_s_multi.tight_layout(rect=[0, 0, 0.75, 1.0])
+                ax_s.legend(handles=s_handles, loc='lower left', frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
+                fig_s_multi.tight_layout()
 
             st.pyplot(fig_s_multi)
 
@@ -561,6 +573,7 @@ def render_multi_batch_tab(settings=None):
         b_names = []
         b_chosen_lt_vals = []
         b_colors = []
+        b_statuses = []
 
         for b in processed_batches:
             b_names.append(b['name'])
@@ -577,24 +590,37 @@ def render_multi_batch_tab(settings=None):
             )
             if rec and len(rec) > 0:
                 val = rec[0]['effective_elapsed_int']
+                st_desc = rec[0]['status']
             else:
                 val = np.nan
+                st_desc = 'Not Reached'
             b_chosen_lt_vals.append(val)
+            b_statuses.append(st_desc)
 
-        fig_lt, ax_lt = plt.subplots(figsize=(8.0, 4.8), dpi=140)
+        fig_lt, ax_lt = plt.subplots(figsize=(8.0, 4.8), dpi=300)
         if show_grid:
             ax_lt.grid(True, linestyle='--', alpha=0.35, color='#cccccc', axis='y', zorder=1)
 
-        bar_width = 0.5 if len(processed_batches) <= 3 else 0.45
-        bars = ax_lt.bar(b_names, b_chosen_lt_vals, color=b_colors, edgecolor='black', width=bar_width)
-        max_val = max([v for v in b_chosen_lt_vals if np.isfinite(v)], default=1.0)
+        plot_vals = [v if (np.isfinite(v) and v > 0) else 0.0 for v in b_chosen_lt_vals]
+        valid_vals = [v for v in b_chosen_lt_vals if (np.isfinite(v) and v > 0)]
+        max_val = max(valid_vals, default=6.0)
 
-        for bar in bars:
+        bar_width = 0.5 if len(processed_batches) <= 3 else 0.45
+        bars = ax_lt.bar(b_names, plot_vals, color=b_colors, edgecolor='black', width=bar_width, zorder=2)
+
+        for idx_b, bar in enumerate(bars):
             h = bar.get_height()
-            if np.isfinite(h) and h > 0:
+            st_text = b_statuses[idx_b]
+            if h > 0:
                 label_text = f"{int(round(h))} Days"
                 ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + (max_val * 0.03 if max_val > 0 else 0.15), label_text, ha='center', va='bottom', fontweight='bold', fontsize=10.5)
+            else:
+                # Mark unreached endpoint gracefully at the baseline
+                ax_lt.plot([bar.get_x() + 0.05, bar.get_x() + bar.get_width() - 0.05], [0.12, 0.12], color='#94a3b8', linestyle=':', linewidth=2.0, zorder=3)
+                badge_lbl = st_text if 'Not Reached' in st_text else 'Not Reached'
+                ax_lt.text(bar.get_x() + bar.get_width()/2.0, max_val * 0.04 + 0.15, badge_lbl, ha='center', va='bottom', fontstyle='italic', fontsize=9.0, color='#64748b', bbox=dict(boxstyle='round,pad=0.25', facecolor='white', edgecolor='#cbd5e1', alpha=0.9), zorder=4)
 
+        ax_lt.set_ylim(0, max(max_val * 1.3, 3.0))
         ax_lt.yaxis.set_major_locator(MaxNLocator(integer=True))
         ax_lt.set_ylabel(f'{active_metric_label} (Elapsed Days)', fontsize=12, fontweight='bold')
         ax_lt.set_title(f'Calculated {active_metric_label} Across CSV Files', fontsize=14, fontweight='bold', pad=12)
@@ -615,17 +641,29 @@ def render_multi_batch_tab(settings=None):
         st.subheader("📋 Multi-CSV Probit Comparative Metrics Table")
         summary_rows = []
         for idx_b, b in enumerate(processed_batches):
-            lt10_val = b.get('lt10', np.nan)
-            lt20_val = b.get('lt20', np.nan)
-            lt30_val = b.get('lt30', np.nan)
-            lt50_val = b.get('lt50', np.nan)
-            lt90_val = b.get('lt90', np.nan)
+            lt_metrics = calculate_lt_percentiles(
+                intercept_a=b['intercept_a'],
+                slope_b=b['slope_b'],
+                start_time=b.get('start_time', 1.0),
+                times_numeric=b.get('batch_elapsed_days', b.get('times_numeric', [])),
+                mortality_pct=b.get('abbott_corrected_pct', b.get('mortality_pct', [])),
+                percentiles=[10, 20, 30, 50, 90]
+            )
+            lt_map = {int(r['percentile']): r for r in lt_metrics}
 
-            lt10_str = f"{int(round(lt10_val))}d" if (np.isfinite(lt10_val) and lt10_val > 0) else "N/A"
-            lt20_str = f"{int(round(lt20_val))}d" if (np.isfinite(lt20_val) and lt20_val > 0) else "N/A"
-            lt30_str = f"{int(round(lt30_val))}d" if (np.isfinite(lt30_val) and lt30_val > 0) else "N/A"
-            lt50_str = f"{int(round(lt50_val))}d" if (np.isfinite(lt50_val) and lt50_val > 0) else "N/A"
-            lt90_str = f"{int(round(lt90_val))}d" if (np.isfinite(lt90_val) and lt90_val > 0) else "N/A"
+            def _fmt_lt(r_info):
+                if not r_info:
+                    return "N/A"
+                eff = r_info.get('effective_elapsed_int')
+                if np.isfinite(eff) and eff > 0:
+                    return f"{int(round(eff))}d"
+                return r_info.get('status', 'Not Reached')
+
+            lt10_str = _fmt_lt(lt_map.get(10))
+            lt20_str = _fmt_lt(lt_map.get(20))
+            lt30_str = _fmt_lt(lt_map.get(30))
+            lt50_str = _fmt_lt(lt_map.get(50))
+            lt90_str = _fmt_lt(lt_map.get(90))
 
             row_data = {
                 "CSV File Name": b['name'],

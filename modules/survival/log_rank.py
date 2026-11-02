@@ -98,22 +98,54 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
         default_palette = ["#2563eb", "#0d9488", "#f59e0b", "#dc2626", "#8b5cf6", "#ec4899", "#06b6d4"]
         cohort_colors = [color_map.get(g, default_palette[i % len(default_palette)]) if color_map else default_palette[i % len(default_palette)] for i, g in enumerate(groups)]
 
-        # Plot mode option: Observed vs Expected Bar Chart or Cumulative Hazard Curves
-        plot_view_k = f"lr_plot_view_{group_col}_{key_suffix}" if key_suffix else f"lr_plot_view_{group_col}"
-        col_pv1, col_pv2 = st.columns([1.5, 2])
-        with col_pv1:
-            plot_view = st.selectbox(
-                "Log-Rank Visualization Mode:",
-                [
-                    "Observed vs. Expected Deaths (O vs. E) Bar Chart",
-                    "Cumulative Hazard Function Curves: H(t) = -ln S(t)"
-                ],
-                index=0,
-                key=plot_view_k
-            )
+        # Render Log-Rank Figures via Structured Thematic Tabs (Hazard Curves first as per Publication Standard)
+        lr_tab_hz, lr_tab_oe = st.tabs([
+            "📈 Log-Rank Cumulative Hazard Curves H(t) (Publication Figure)",
+            "📊 Observed vs. Expected Deaths (O vs. E) Bar Chart"
+        ])
 
-        if "Observed vs. Expected" in plot_view:
-            fig_lr, ax_lr = plt.subplots(figsize=(10.2, 5.2), dpi=140)
+        with lr_tab_hz:
+            # Cumulative Hazard Plot: H(t) via Nelson-Aalen Estimator (Matching Publication Benchmark)
+            fig_hz, ax_hz = plt.subplots(figsize=(9.5, 5.0), dpi=300)
+
+            for idx_g, g in enumerate(groups):
+                m = (G == g)
+                sub_t = T[m]
+                sub_e = E[m]
+                col = cohort_colors[idx_g]
+                naf_hz = NelsonAalenFitter()
+                naf_hz.fit(sub_t, event_observed=sub_e, label=g)
+                ch_df = naf_hz.cumulative_hazard_
+                timeline = ch_df.index.values
+                ch_vals = ch_df.iloc[:, 0].values
+                # Step curve starting strictly from baseline t=0, H=0
+                if len(timeline) > 0 and timeline[0] > 0:
+                    timeline = np.insert(timeline, 0, 0.0)
+                    ch_vals = np.insert(ch_vals, 0, 0.0)
+                ax_hz.step(timeline, ch_vals, where='post', color=col, linewidth=2.4, label=g)
+
+            ax_hz.spines['left'].set_linewidth(1.8)
+            ax_hz.spines['bottom'].set_linewidth(1.8)
+            ax_hz.spines['top'].set_visible(False)
+            ax_hz.spines['right'].set_visible(False)
+            ax_hz.tick_params(direction='out', length=5, width=1.4, labelsize=10.5)
+
+            ax_hz.set_xlabel('Elapsed Observation Time (Days)', fontsize=12, fontweight='bold', labelpad=8)
+            ax_hz.set_ylabel('Cumulative Hazard H(t) = -ln Ŝ(t)', fontsize=12, fontweight='bold', labelpad=8)
+            ax_hz.set_title(f'Log-Rank Cumulative Hazard Curves H(t) Across Cohorts (χ² = {chisq:.3f}, p = {p_str})', fontsize=12.5, fontweight='bold', pad=12)
+            ax_hz.legend(loc='upper left', frameon=True, facecolor='white', framealpha=0.95, edgecolor='#cbd5e1', fontsize=9.5)
+            fig_hz.tight_layout()
+
+            st.pyplot(fig_hz)
+
+            buf_hz = io.BytesIO()
+            fig_hz.savefig(buf_hz, format="png", dpi=300, bbox_inches='tight')
+            dl_hz_k = f"dl_lr_hz_plot_{group_col}_{key_suffix}" if key_suffix else f"dl_lr_hz_plot_{group_col}"
+            st.download_button("📥 Download Cumulative Hazard Curves (PNG)", data=buf_hz.getvalue(), file_name="logrank_cumulative_hazard.png", mime="image/png", key=dl_hz_k)
+            plt.close(fig_hz)
+
+        with lr_tab_oe:
+            fig_lr, ax_lr = plt.subplots(figsize=(9.2, 5.0), dpi=300)
             ax_lr.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
             x_indices = np.arange(len(groups))
@@ -142,8 +174,8 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             ax_lr.set_xticks(x_indices)
             ax_lr.set_xticklabels(groups, fontsize=10.5, fontweight='bold', rotation=15, ha='right')
             ax_lr.set_ylim(0, max_y * 1.25)
-            ax_lr.set_title(f'Log-Rank Test: Observed vs. Expected Deaths Under H₀ (χ² = {chisq:.3f}, p = {p_str})', fontsize=13, fontweight='bold', pad=12)
-            ax_lr.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', framealpha=0.95, edgecolor='#cbd5e1', fontsize=9.5)
+            ax_lr.set_title(f'Log-Rank Test: Observed vs. Expected Deaths Under H₀ (χ² = {chisq:.3f}, p = {p_str})', fontsize=12.5, fontweight='bold', pad=12)
+            ax_lr.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.92, fontsize=10)
             ax_lr.spines['top'].set_visible(False)
             ax_lr.spines['right'].set_visible(False)
             fig_lr.tight_layout()
@@ -155,36 +187,6 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             dl_lr_k = f"dl_lr_oe_plot_{group_col}_{key_suffix}" if key_suffix else f"dl_lr_oe_plot_{group_col}"
             st.download_button("📥 Download Log-Rank Observed vs. Expected Plot (PNG)", data=buf_lr.getvalue(), file_name="logrank_observed_vs_expected.png", mime="image/png", key=dl_lr_k)
             plt.close(fig_lr)
-
-        else:
-            # Cumulative Hazard Plot: H(t) via Nelson-Aalen Estimator
-            fig_hz, ax_hz = plt.subplots(figsize=(10.0, 5.2), dpi=140)
-            ax_hz.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
-
-            for idx_g, g in enumerate(groups):
-                m = (G == g)
-                sub_t = T[m]
-                sub_e = E[m]
-                col = cohort_colors[idx_g]
-                naf_hz = NelsonAalenFitter()
-                naf_hz.fit(sub_t, event_observed=sub_e, label=g)
-                naf_hz.plot_cumulative_hazard(ax=ax_hz, color=col, linewidth=2.2, ci_show=False)
-
-            ax_hz.set_xlabel('Elapsed Observation Time (Days)', fontsize=12, fontweight='bold', labelpad=8)
-            ax_hz.set_ylabel('Cumulative Hazard H(t) = -ln Ŝ(t)', fontsize=12, fontweight='bold', labelpad=8)
-            ax_hz.set_title(f'Log-Rank Cumulative Hazard Curves H(t) Across Cohorts (χ² = {chisq:.3f}, p = {p_str})', fontsize=13, fontweight='bold', pad=12)
-            ax_hz.spines['top'].set_visible(False)
-            ax_hz.spines['right'].set_visible(False)
-            ax_hz.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', frameon=True, facecolor='white', framealpha=0.92, edgecolor='#cbd5e1', fontsize=9.5)
-            fig_hz.tight_layout()
-
-            st.pyplot(fig_hz)
-
-            buf_hz = io.BytesIO()
-            fig_hz.savefig(buf_hz, format="png", dpi=300, bbox_inches='tight')
-            dl_hz_k = f"dl_lr_hz_plot_{group_col}_{key_suffix}" if key_suffix else f"dl_lr_hz_plot_{group_col}"
-            st.download_button("📥 Download Cumulative Hazard Plot (PNG)", data=buf_hz.getvalue(), file_name="logrank_cumulative_hazard.png", mime="image/png", key=dl_hz_k)
-            plt.close(fig_hz)
 
         # Observed vs. Expected Data Table
         st.markdown("#### 📊 Mantel-Cox Observed vs. Expected Breakdown")
