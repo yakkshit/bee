@@ -1,6 +1,6 @@
 # 📖 Scientific Documentation, Bioassay Protocol & Mathematical Foundations
 
-Dedicated documentation for **Bee Analytics Studio** — an open-source, publication-grade computational biostatistics platform designed for honeybee (*Apis mellifera*) toxicology, longevity kinetics, oral exposure bioassays, and nutritional feeding persistence.
+Dedicated documentation for **Antigravity Bee Analytics Studio** — an open-source, publication-grade computational biostatistics platform designed for honeybee (*Apis mellifera*) toxicology, longevity kinetics, oral exposure bioassays, and nutritional feeding persistence.
 
 ---
 
@@ -244,3 +244,17 @@ git push origin main
 - The `--cached` flag instructs Git to delete the file references only from the Git index (staging tree), leaving your local Python virtual environment, dependencies, and local data completely intact.
 
 ---
+
+## 6. Academic Citation
+
+If you use this software in your research or publication, please cite as:
+
+```bibtex
+@software{bee_analytics_studio_2026,
+  author = {Antigravity Bioassay Consortium},
+  title = {Antigravity Bee Analytics Studio: A Publication-Grade Computational Biostatistical Suite for Honeybee (Apis mellifera) Bioassays},
+  year = {2026},
+  url = {https://github.com/yakkshit/bee}
+}
+```
+
