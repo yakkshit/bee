@@ -93,6 +93,41 @@ def audit_single_dataframe(df, filename="Active Dataset"):
                 'msg': f"Low cumulative mortality ({final_mort:.1f}% across {len(df)} days; {dead_final}/{total_bees} bees). Lethal median time (LT50) was not reached during this trial."
             })
 
+    # 5. Metadata columns consistency check (after Humidity: TempTreatment, StartTime, Weather, BeeType, Hive/ColonyID, OutDoorHumidity, OutsideTemp, key)
+    # Protocol rule: Only Day 1 cell values are considered; subsequent rows are ignored.
+    meta_cols_expected = ['temptreatment', 'observations/notes', 'starttime', 'weather', 'beetype', 'hive/colonyid', 'outdoorhumidity', 'outsidetemp', 'key']
+    if len(df) > 1:
+        for c in df.columns:
+            c_norm = str(c).strip().lower()
+            if any(mk == c_norm for mk in meta_cols_expected) or 'key' in c_norm or 'beetype' in c_norm or 'hive' in c_norm:
+                d1_raw = df[c].iloc[0]
+                d1_val = "" if pd.isna(d1_raw) else str(d1_raw).strip()
+                if d1_val.lower() in ['nan', 'none', 'null']:
+                    d1_val = ""
+
+                # Check subsequent days
+                conflicting_days = []
+                for row_idx in range(1, len(df)):
+                    r_raw = df[c].iloc[row_idx]
+                    r_val = "" if pd.isna(r_raw) else str(r_raw).strip()
+                    if r_val and r_val.lower() not in ['nan', 'none', 'null', '']:
+                        if not d1_val:
+                            diagnostics.append({
+                                'type': 'warning',
+                                'file': filename,
+                                'msg': f"Column '{c}' was blank on Day 1 but has value '{r_val}' on Day {row_idx + 1}. Auto-propagated '{r_val}' as trial metadata."
+                            })
+                            d1_val = r_val
+                        elif r_val != d1_val:
+                            conflicting_days.append(f"Day {row_idx + 1}: '{r_val}'")
+
+                if conflicting_days:
+                    diagnostics.append({
+                        'type': 'info',
+                        'file': filename,
+                        'msg': f"Metadata column '{c}' contains subsequent entries ({', '.join(conflicting_days[:3])}) differing from Day 1 baseline ('{d1_val}'). Per bioassay protocol, Day 1 cell is strictly used and subsequent entries are ignored."
+                    })
+
     return diagnostics
 
 

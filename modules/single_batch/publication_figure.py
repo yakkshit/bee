@@ -52,7 +52,7 @@ def render_single_publication_figure(computed, settings=None, image_collector=No
     st.caption("Composite 4-panel figure (Panels A–D) prepared to high-impact journal standards (Cell, Nature, ES&T, Journal of Insect Physiology) at 300 DPI.")
 
     if num_days > 0:
-        fig6 = plt.figure(figsize=(14, 11), dpi=300)
+        fig6 = plt.figure(figsize=(14, 11), dpi=140)
         gs = fig6.add_gridspec(2, 2, hspace=0.30, wspace=0.25)
 
         fit_se = np.std(residuals_mort)
@@ -60,11 +60,12 @@ def render_single_publication_figure(computed, settings=None, image_collector=No
 
         # Panel A: Mortality
         ax_a = fig6.add_subplot(gs[0, 0])
-        ax_a.fill_between(t_dense, np.clip(fit_mort_curve - 1.96 * fit_se, 0, 100), np.clip(fit_mort_curve + 1.96 * fit_se, 0, 100), color=primary_color, alpha=0.12)
-        ax_a.plot(t_dense, fit_mort_curve, color=primary_color, linewidth=line_width, linestyle=line_style)
-        ax_a.errorbar(elapsed_days, mortality_pct, yerr=mortality_se, fmt='o', color=primary_color, ecolor=primary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=primary_color, markeredgecolor='black')
+        ax_a.fill_between(t_dense, np.clip(fit_mort_curve - 1.96 * fit_se, 0, 100), np.clip(fit_mort_curve + 1.96 * fit_se, 0, 100), color=primary_color, alpha=0.12, label='95% CI Band')
+        ax_a.plot(t_dense, fit_mort_curve, color=primary_color, linewidth=line_width, linestyle=line_style, label='Logistic Model')
+        ax_a.errorbar(elapsed_days, mortality_pct, yerr=mortality_se, fmt='o', color=primary_color, ecolor=primary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=primary_color, markeredgecolor='black', label='Observed (Mean ± SE)')
         ax_a.axhline(50, color='#333333', linestyle=':', linewidth=1.2)
-        ax_a.text(0.06, 0.90, f"Y = {L_fit:.1f} / (1 + exp(-{k_fit:.2f}(X - {t0_fit:.1f})))\nR² = {r2_mort:.4f}", transform=ax_a.transAxes, fontsize=10.5, verticalalignment='top')
+        df_mort_fig = max(1, num_days - 3)
+        ax_a.text(0.06, 0.90, f"Y = {L_fit:.1f} / (1 + exp(-{k_fit:.2f}(X - {t0_fit:.1f})))\nR² = {r2_mort:.4f} | df = {df_mort_fig}\nSE(fit) = {fit_se:.2f}% | 95% CI", transform=ax_a.transAxes, fontsize=9.0, verticalalignment='top', bbox=dict(boxstyle='square,pad=0.2', facecolor='white', edgecolor='#e0e0e0', alpha=0.85))
         ax_a.set_xlabel('Observation Time / Days', fontsize=11.5, fontweight='bold')
         ax_a.set_ylabel('Mortality / %', fontsize=11.5, fontweight='bold')
         ax_a.set_xlim(-0.1, max_time * 1.05)
@@ -78,11 +79,12 @@ def render_single_publication_figure(computed, settings=None, image_collector=No
 
         # Panel B: Survival
         ax_b = fig6.add_subplot(gs[0, 1])
-        ax_b.fill_between(t_dense, np.clip(fit_surv_curve - 1.96 * surv_se_fit, 0, 100), np.clip(fit_surv_curve + 1.96 * surv_se_fit, 0, 100), color=secondary_color, alpha=0.15)
-        ax_b.plot(t_dense, fit_surv_curve, color=secondary_color, linewidth=line_width, linestyle=line_style)
-        ax_b.errorbar(elapsed_days, survival_pct, yerr=survival_se, fmt='o', color=secondary_color, ecolor=secondary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=secondary_color, markeredgecolor='black')
+        ax_b.fill_between(t_dense, np.clip(fit_surv_curve - 1.96 * surv_se_fit, 0, 100), np.clip(fit_surv_curve + 1.96 * surv_se_fit, 0, 100), color=secondary_color, alpha=0.15, label='95% CI Band')
+        ax_b.plot(t_dense, fit_surv_curve, color=secondary_color, linewidth=line_width, linestyle=line_style, label='Decay Model')
+        ax_b.errorbar(elapsed_days, survival_pct, yerr=survival_se, fmt='o', color=secondary_color, ecolor=secondary_color, elinewidth=1.6, capsize=4, capthick=1.6, markersize=marker_size, markerfacecolor=secondary_color, markeredgecolor='black', label='Observed (Mean ± SE)')
         ax_b.axhline(50, color='#333333', linestyle=':', linewidth=1.2)
-        ax_b.text(0.06, 0.32, f"Y = {S0_surv:.1f} * exp(-{a_surv:.4f} * X^{b_surv:.2f})\nR² = {r2_surv:.4f}", transform=ax_b.transAxes, fontsize=10.5, verticalalignment='top')
+        df_surv_fig = max(1, num_days - 3)
+        ax_b.text(0.06, 0.32, f"Y = {S0_surv:.1f} * exp(-{a_surv:.4f} * X^{b_surv:.2f})\nR² = {r2_surv:.4f} | df = {df_surv_fig}\nSE(fit) = {surv_se_fit:.2f}% | 95% CI", transform=ax_b.transAxes, fontsize=9.0, verticalalignment='top', bbox=dict(boxstyle='square,pad=0.2', facecolor='white', edgecolor='#e0e0e0', alpha=0.85))
         ax_b.set_xlabel('Observation Time / Days', fontsize=11.5, fontweight='bold')
         ax_b.set_ylabel('Bee Survival / %', fontsize=11.5, fontweight='bold')
         ax_b.set_xlim(-0.1, max_time * 1.05)
@@ -101,11 +103,14 @@ def render_single_publication_figure(computed, settings=None, image_collector=No
             km_vals = kmf.survival_function_['KM_estimate'].values
             ci_df = kmf.confidence_interval_survival_function_
             ax_c.step(km_timeline, km_vals, where='post', color='#0284c7', linewidth=line_width, linestyle=line_style, label='KM Estimate')
-            ax_c.fill_between(km_timeline, ci_df.iloc[:, 0], ci_df.iloc[:, 1], step='post', color='#0284c7', alpha=0.15, label='95% CI')
+            ax_c.fill_between(km_timeline, ci_df.iloc[:, 0], ci_df.iloc[:, 1], step='post', color='#0284c7', alpha=0.15, label='95% Greenwood CI')
             censored_days = durations[events == 0]
             if len(censored_days) > 0:
                 censored_surv = [kmf.survival_function_at_times(d).values[0] for d in censored_days]
                 ax_c.plot(censored_days, censored_surv, '+', color='#0f172a', markersize=8.5, markeredgewidth=2, label=f'Censored (n={len(censored_days)})')
+            df_km_fig = max(1, len(durations) - 1)
+            ax_c.text(0.04, 0.16, f"N = {len(durations)} | df = {df_km_fig}\nSE: Greenwood formula\n95% CI shown",
+                      transform=ax_c.transAxes, fontsize=8.5, fontweight='bold', bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.90))
         ax_c.axhline(0.5, color='#333333', linestyle=':', linewidth=1.2)
         ax_c.set_xlabel('Observation Time / Days', fontsize=11.5, fontweight='bold')
         ax_c.set_ylabel('Survival Probability', fontsize=11.5, fontweight='bold')

@@ -277,12 +277,34 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
     plot_log_time = np.array([np.log10(d) for d in batch_elapsed_days if d > 0])
     plot_probit_y = probit_vals[:len(plot_log_time)]
 
+    # Standard Deviation, Standard Error, and 95% Confidence Intervals for Mortality & Survival
+    safe_n = max(1, num_bees)
+    p_mort = np.clip(mortality_pct / 100.0, 0.0, 1.0)
+    mortality_sd = np.sqrt(p_mort * (1.0 - p_mort)) * 100.0
+    mortality_se = mortality_sd / np.sqrt(safe_n)
+    mortality_ci_lower = np.clip(mortality_pct - 1.96 * mortality_se, 0.0, 100.0)
+    mortality_ci_upper = np.clip(mortality_pct + 1.96 * mortality_se, 0.0, 100.0)
+
+    survival_sd = mortality_sd
+    survival_se = mortality_se
+    survival_ci_lower = np.clip(survival_pct - 1.96 * survival_se, 0.0, 100.0)
+    survival_ci_upper = np.clip(survival_pct + 1.96 * survival_se, 0.0, 100.0)
+
     if len(reg_log_time) > 1:
         res = linregress(reg_log_time, reg_probit_y)
         a, b, r_val = res.intercept, res.slope, res.rvalue
         r_squared = r_val ** 2
+        se_slope = getattr(res, 'stderr', 0.0) if getattr(res, 'stderr', None) is not None else 0.0
+        se_intercept = getattr(res, 'intercept_stderr', 0.0) if getattr(res, 'intercept_stderr', None) is not None else 0.0
+        df_regression = max(1, len(reg_log_time) - 2)
+        p_val_reg = getattr(res, 'pvalue', 1.0)
     else:
         a, b, r_val, r_squared = 0.0, 0.0, 0.0, 0.0
+        se_slope, se_intercept = 0.0, 0.0
+        df_regression = 1
+        p_val_reg = 1.0
+
+    df_sample = max(1, num_bees - 1)
 
     # Calculate default LT50 and LT90 (with bioassay boundary protection)
     max_t = batch_elapsed_days[-1] if len(batch_elapsed_days) > 0 else 6.0
@@ -353,6 +375,20 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
         t_cand = str(df_copy['Treatment'].iloc[0]).strip()
         if t_cand and t_cand.lower() not in ['nan', 'none', '']:
             treatment_val = t_cand
+
+    # Day 1 Metadata extraction (after humidity: TempTreatment, Observations/notes, StartTime, Weather, BeeType, Hive/ColonyID, OutDoorHumidity, OutsideTemp, key)
+    # Strictly consider Day 1 (first row) cell values; ignore subsequent rows for metadata per bioassay protocol.
+    batch_metadata = {}
+    meta_keys_list = ['temptreatment', 'observations/notes', 'starttime', 'weather', 'beetype', 'hive/colonyid', 'outdoorhumidity', 'outsidetemp', 'key']
+    for c in df_copy.columns:
+        c_clean = str(c).strip()
+        c_lower = c_clean.lower()
+        if any(mk == c_lower for mk in meta_keys_list) or 'key' in c_lower or 'beetype' in c_lower or 'hive' in c_lower:
+            if len(df_copy) > 0:
+                raw_m = df_copy[c].iloc[0]
+                m_str = "" if pd.isna(raw_m) else str(raw_m).strip()
+                if m_str and m_str.lower() not in ['nan', 'none', 'null']:
+                    batch_metadata[c_clean] = m_str
 
     individual_bees = []
     if len(bee_cols) > 0:
@@ -525,20 +561,33 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
         'batch_elapsed_days': batch_elapsed_days,
         'start_time': start_time,
         'mortality_pct': mortality_pct,
+        'mortality_sd': mortality_sd,
+        'mortality_se': mortality_se,
+        'mortality_ci_lower': mortality_ci_lower,
+        'mortality_ci_upper': mortality_ci_upper,
         'abbott_corrected_pct': abbott_corrected_pct,
         'survival_pct': survival_pct,
+        'survival_sd': survival_sd,
+        'survival_se': survival_se,
+        'survival_ci_lower': survival_ci_lower,
+        'survival_ci_upper': survival_ci_upper,
         'probit_vals': probit_vals,
         'log_time': plot_log_time,
         'probit_y': plot_probit_y,
         'intercept_a': a,
         'slope_b': b,
+        'se_slope': se_slope,
+        'se_intercept': se_intercept,
+        'df_regression': df_regression,
+        'df_sample': df_sample,
+        'p_val_reg': p_val_reg,
         'r_squared': r_squared,
         'r_val': r_val,
         'lt10': lt_map.get('LT10', np.nan),
         'lt20': lt_map.get('LT20', np.nan),
         'lt30': lt_map.get('LT30', np.nan),
-        'lt50': lt50_elapsed,
-        'lt90': lt90_elapsed,
+        'lt50': lt_map.get('LT50', lt50_elapsed),
+        'lt90': lt_map.get('LT90', lt90_elapsed),
         'lt_records': default_lt_records,
         'lt_dict': lt_map,
         'individual_bees': pd.DataFrame(individual_bees),
@@ -559,7 +608,9 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
         'daily_sem_tcons': daily_sem_tcons,
         'daily_alive_mean_tcons': daily_alive_mean_tcons,
         'daily_alive_sem_tcons': daily_alive_sem_tcons,
-        'cumulative_mean_tcons': cumulative_mean_tcons
+        'cumulative_mean_tcons': cumulative_mean_tcons,
+        'metadata': batch_metadata,
+        'key': key_from_df
     }
 
 

@@ -43,8 +43,8 @@ def render_single_batch_tab(settings=None):
     st.markdown("---")
     st.header("📊 Plot Generation & Analytics")
 
-    # 2. Mathematical Modeling & Metric Extraction
-    computed = compute_single_batch_data(df, settings)
+    # 2. Mathematical Modeling & Metric Extraction (Cached by DataFrame & Abbott C)
+    computed = compute_single_batch_data(df, abbott_c=settings.get('abbott_c', 0.0))
 
     num_bees = computed['num_bees']
     num_days = computed['num_days']
@@ -79,7 +79,7 @@ def render_single_batch_tab(settings=None):
 
     def image_collector(fig, filename, text, key_suffix=""):
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=300, bbox_inches='tight')
+        fig.savefig(buf, format="png", dpi=140, bbox_inches='tight')
         img_bytes = buf.getvalue()
         plot_images_dict[filename] = img_bytes
         base_key = f"dl_{filename}_{key_suffix}" if key_suffix else f"dl_{filename}"

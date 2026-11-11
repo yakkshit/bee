@@ -21,7 +21,7 @@ def render_hazard_ratio_forest_plot(table_rows, group_col='cohort', key_suffix: 
         return
 
     st.markdown("#### 🌲 Hazard Ratio Forest Plot (95% CI Uncertainty)")
-    fig_fp, ax_fp = plt.subplots(figsize=(8.8, max(3.6, len(table_rows) * 0.75 + 1.2)), dpi=300)
+    fig_fp, ax_fp = plt.subplots(figsize=(8.8, max(3.6, len(table_rows) * 0.75 + 1.2)), dpi=130)
     ax_fp.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='x', zorder=1)
 
     y_pos = np.arange(len(table_rows))[::-1]
@@ -92,8 +92,10 @@ def render_hazard_ratio_forest_plot(table_rows, group_col='cohort', key_suffix: 
                 elinewidth=2.8, capsize=8.0, capthick=2.5, markersize=9.0, zorder=4
             )
 
-            # 3. Formatted Badge with clear background box
-            annot = f"HR = {hr_list[i]:.2f}  [95% CI: {ci_l_list[i]:.2f} – {ci_u_list[i]:.2f}]  (p = {p_vals[i]:.3g})"
+            # 3. Formatted Badge with clear background box showing HR, 95% CI, SE, and p-value
+            se_badge = r.get("Std Error (SE)", 0.0)
+            se_text = f", SE={se_badge:.3f}" if (isinstance(se_badge, (int, float)) and se_badge > 0) else ""
+            annot = f"HR = {hr_list[i]:.2f}  [95% CI: {ci_l_list[i]:.2f} – {ci_u_list[i]:.2f}]{se_text}  (p = {p_vals[i]:.3g})"
             ax_fp.text(
                 ci_u_list[i] + (0.06 * (max_ci - min_ci + 1.0)), y_pos[i], annot,
                 va='center', ha='left', fontsize=9.5, fontweight='bold', color='#0f172a',
@@ -105,7 +107,8 @@ def render_hazard_ratio_forest_plot(table_rows, group_col='cohort', key_suffix: 
     ax_fp.axvspan(0.9, 1.1, color='#f1f5f9', alpha=0.75, zorder=1)
     ax_fp.set_yticks(y_pos)
     ax_fp.set_yticklabels(labels, fontsize=11, fontweight='bold')
-    ax_fp.set_xlabel('Hazard Ratio (HR) with 95% Confidence Intervals', fontsize=12, fontweight='bold', labelpad=12)
+    df_covs = max(1, len([r for r in table_rows if not r.get('is_reference', False)]))
+    ax_fp.set_xlabel(f'Hazard Ratio (HR) with 95% Confidence Intervals (Wald SE, model df = {df_covs})', fontsize=11.5, fontweight='bold', labelpad=12)
     ax_fp.spines['top'].set_visible(False)
     ax_fp.spines['right'].set_visible(False)
 

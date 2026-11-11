@@ -22,21 +22,18 @@ try:
     import streamlit as st
     cache_data_fn = st.cache_data
 except Exception:
-    def cache_data_fn(func):
-        return func
+    def cache_data_fn(func=None, **kwargs):
+        if func is not None:
+            return func
+        return lambda f: f
 
 
-@cache_data_fn
-def compute_single_batch_data(df, settings=None):
+@cache_data_fn(show_spinner=False)
+def _compute_single_batch_data_cached(df, abbott_c=0.0):
     """
-    Parses raw dataframe observations and calculates mathematical models,
-    SE bands, residuals, Kaplan-Meier fitter, and Probit parameters.
+    Cached mathematical engine: strictly depends on DataFrame observations and abbott_c.
+    Visual UI settings (colors, line widths, marker sizes) are excluded to ensure instant UI responsiveness.
     """
-    if settings is None:
-        settings = {}
-
-    abbott_c = settings.get('abbott_c', 0.0)
-
     times_numeric, raw_times, time_col = parse_time_data(df)
     elapsed_days = times_numeric
     day_labels = raw_times
@@ -230,11 +227,29 @@ def compute_single_batch_data(df, settings=None):
     if len(reg_log_time) > 1:
         res = linregress(reg_log_time, reg_probit_y)
         probit_a, probit_b, probit_r = res.intercept, res.slope, res.rvalue
+        probit_se_b = getattr(res, 'stderr', 0.0) if getattr(res, 'stderr', None) is not None else 0.0
+        probit_se_a = getattr(res, 'intercept_stderr', 0.0) if getattr(res, 'intercept_stderr', None) is not None else 0.0
+        probit_p = getattr(res, 'pvalue', 1.0)
+        df_probit = max(1, len(reg_log_time) - 2)
     else:
         probit_a, probit_b, probit_r = 0, 0, 0
+        probit_se_b, probit_se_a = 0.0, 0.0
+        probit_p = 1.0
+        df_probit = 1
 
-    mortality_se = np.sqrt((mortality_pct / 100.0) * (1.0 - mortality_pct / 100.0) / max(1, num_bees)) * 100.0
-    survival_se = np.sqrt((survival_pct / 100.0) * (1.0 - survival_pct / 100.0) / max(1, num_bees)) * 100.0
+    mortality_sd = np.sqrt(np.clip((mortality_pct / 100.0) * (1.0 - mortality_pct / 100.0), 0.0, 1.0)) * 100.0
+    mortality_se = mortality_sd / np.sqrt(max(1, num_bees))
+    mortality_ci_lower = np.clip(mortality_pct - 1.96 * mortality_se, 0.0, 100.0)
+    mortality_ci_upper = np.clip(mortality_pct + 1.96 * mortality_se, 0.0, 100.0)
+
+    survival_sd = mortality_sd
+    survival_se = mortality_se
+    survival_ci_lower = np.clip(survival_pct - 1.96 * survival_se, 0.0, 100.0)
+    survival_ci_upper = np.clip(survival_pct + 1.96 * survival_se, 0.0, 100.0)
+
+    df_sample = max(1, num_bees - 1)
+    df_logistic = max(1, num_days - 3)
+    df_decay = max(1, num_days - 3)
 
     def logistic_mort(t, L, k, t0):
         return L / (1.0 + np.exp(-k * (t - t0)))
@@ -302,7 +317,20 @@ def compute_single_batch_data(df, settings=None):
         'mortality_pct': mortality_pct,
         'abbott_corrected_pct': abbott_corrected_pct,
         'mortality_se': mortality_se,
+        'mortality_sd': mortality_sd,
+        'mortality_ci_lower': mortality_ci_lower,
+        'mortality_ci_upper': mortality_ci_upper,
         'survival_se': survival_se,
+        'survival_sd': survival_sd,
+        'survival_ci_lower': survival_ci_lower,
+        'survival_ci_upper': survival_ci_upper,
+        'df_sample': df_sample,
+        'df_logistic': df_logistic,
+        'df_decay': df_decay,
+        'df_probit': df_probit,
+        'probit_se_b': probit_se_b,
+        'probit_se_a': probit_se_a,
+        'probit_p': probit_p,
         't_dense': t_dense,
         'fit_mort_curve': fit_mort_curve,
         'fit_surv_curve': fit_surv_curve,
@@ -340,3 +368,26 @@ def compute_single_batch_data(df, settings=None):
         'cons_corr_r': cons_corr_r,
         'cons_corr_p': cons_corr_p
     }
+
+
+def compute_single_batch_data(df, settings=None, abbott_c=None):
+    """
+    Public entry point for single batch calculations.
+    Delegates to cached calculation using only df and abbott_c.
+    UI styling changes in settings will not bust this computation cache.
+    """
+    if abbott_c is None:
+        if isinstance(settings, dict):
+            abbott_c = float(settings.get('abbott_c', 0.0))
+        elif isinstance(settings, (int, float)):
+            abbott_c = float(settings)
+        else:
+            abbott_c = 0.0
+    else:
+        try:
+            abbott_c = float(abbott_c)
+        except Exception:
+            abbott_c = 0.0
+
+    return _compute_single_batch_data_cached(df, abbott_c=abbott_c)
+

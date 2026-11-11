@@ -12,17 +12,12 @@ from matplotlib.ticker import MultipleLocator
 from lifelines import KaplanMeierFitter
 
 
-def compute_kaplan_meier_life_table(durations, events):
-    """
-    Computes the exact step-by-step Kaplan-Meier product-limit life table:
-        Ŝ(t) = ∏_{t_i ≤ t} (1 - d_i / n_i)
-    Returns a pandas DataFrame with step-by-step arithmetic steps matching
-    the exact formulation in the bioassay protocol (e.g. S(1) = 9/10 = 0.90, S(2) = 0.90 * 8/9 = 0.80).
-    """
-    if len(durations) == 0:
+@st.cache_data(show_spinner=False)
+def _compute_kaplan_meier_life_table_cached(durations_tuple, events_tuple):
+    if len(durations_tuple) == 0:
         return pd.DataFrame()
 
-    df_raw = pd.DataFrame({'t': np.array(durations, dtype=float), 'e': np.array(events, dtype=int)}).sort_values('t')
+    df_raw = pd.DataFrame({'t': np.array(durations_tuple, dtype=float), 'e': np.array(events_tuple, dtype=int)}).sort_values('t')
     unique_times = sorted(df_raw['t'].unique())
 
     n_total = len(df_raw)
@@ -80,6 +75,19 @@ def compute_kaplan_meier_life_table(durations, events):
         current_at_risk -= (d_i + c_i)
 
     return pd.DataFrame(rows)
+
+
+def compute_kaplan_meier_life_table(durations, events):
+    """
+    Computes the exact step-by-step Kaplan-Meier product-limit life table:
+        Ŝ(t) = ∏_{t_i ≤ t} (1 - d_i / n_i)
+    Cached using tuple conversion for instant retrieval on UI reruns.
+    """
+    if len(durations) == 0:
+        return pd.DataFrame()
+    d_tup = tuple(float(x) for x in durations)
+    e_tup = tuple(int(x) for x in events)
+    return _compute_kaplan_meier_life_table_cached(d_tup, e_tup)
 
 
 def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None, key_suffix: str = ""):
@@ -196,8 +204,8 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Render Plot 1: Kaplan-Meier Survival Curves
-    fig_km, ax_km = plt.subplots(figsize=(9.2, 5.5), dpi=300)
+    # Render Plot 1: Kaplan-Meier Survival Curves (130 DPI for rapid on-screen reactivity)
+    fig_km, ax_km = plt.subplots(figsize=(9.2, 5.5), dpi=130)
     ax_km.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
     km_fitter = KaplanMeierFitter()
@@ -214,9 +222,24 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
         n_events = int(np.sum(sub_e))
         n_censored = n_total - n_events
         event_rate = (n_events / n_total * 100.0) if n_total > 0 else 0.0
+        df_cohort = max(1, n_total - 1)
+        sd_cohort = float(np.std(sub_e)) if len(sub_e) > 0 else 0.0
 
-        km_fitter.fit(sub_t, event_observed=sub_e, label=f"{g} (n={n_total}, events={n_events})")
+        km_fitter.fit(sub_t, event_observed=sub_e, label=f"{g} (n={n_total}, events={n_events}, df={df_cohort})")
         km_fitter.plot_survival_function(ax=ax_km, color=col, ci_show=True, ci_alpha=0.12, linewidth=2.2)
+
+        # Extract final Greenwood SE & 95% CI
+        ci_df = km_fitter.confidence_interval_survival_function_
+        if not ci_df.empty:
+            final_ci_l = float(ci_df.iloc[-1, 0]) * 100.0
+            final_ci_u = float(ci_df.iloc[-1, 1]) * 100.0
+            ci_str = f"[{final_ci_l:.1f}%, {final_ci_u:.1f}%]"
+            se_series = (ci_df.iloc[:, 1] - ci_df.iloc[:, 0]) / (2.0 * 1.96)
+            avg_se = float(np.mean(se_series))
+            se_str = f"{avg_se:.4f}"
+        else:
+            ci_str = "N/A"
+            se_str = "N/A"
 
         cens_t = sub_t[sub_e == 0]
         if len(cens_t) > 0:
@@ -231,9 +254,13 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
         cohort_summary.append({
             "Cohort / Stratum": g,
             "Sample Size (N)": n_total,
+            "Sample df": df_cohort,
             events_label_name: n_events,
             cens_label_name: n_censored,
             "Event Rate (%)": f"{event_rate:.1f}%",
+            "Mean Greenwood SE": se_str,
+            "Final 95% CI": ci_str,
+            "Sample SD": f"{sd_cohort:.3f}",
             metric_label_name: median_str
         })
 
@@ -244,8 +271,9 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
             lr_res_km = multivariate_logrank_test(T, G, E)
             p_val_km = lr_res_km.p_value
             p_str_km = "p < 0.001" if p_val_km < 0.001 else f"p = {p_val_km:.4f}"
-            ax_km.text(0.04, 0.12, f"Log-Rank: {p_str_km}", transform=ax_km.transAxes,
-                       fontsize=10, fontweight='bold', bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.92))
+            df_lr_km = len(groups) - 1
+            ax_km.text(0.04, 0.12, f"Log-Rank: χ² = {lr_res_km.test_statistic:.2f}, df = {df_lr_km}, {p_str_km}", transform=ax_km.transAxes,
+                       fontsize=9.5, fontweight='bold', bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.92))
         except Exception:
             pass
 

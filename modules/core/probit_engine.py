@@ -6,7 +6,17 @@ and observed empirical bioassay transition days.
 import numpy as np
 from scipy.stats import norm
 
+try:
+    import streamlit as st
+    cache_data_fn = st.cache_data
+except Exception:
+    def cache_data_fn(func=None, **kwargs):
+        if func is not None:
+            return func
+        return lambda f: f
 
+
+@cache_data_fn(show_spinner=False)
 def calculate_lt_percentiles(intercept_a, slope_b, start_time=1.0, times_numeric=None, mortality_pct=None, percentiles=(10, 20, 30, 40, 50, 60, 70, 80, 90)):
     """
     Computes Finney Probit-derived theoretical LT_X and observed empirical LT_X
@@ -99,11 +109,11 @@ def calculate_lt_percentiles(intercept_a, slope_b, start_time=1.0, times_numeric
                             break
 
         # Effective elapsed days: prefer empirical observation if reached
-        # Fallback to theoretical model ONLY if extrapolation is biologically reasonable (<= 2x trial duration and max mort >= 0.5 * target)
+        # Fallback to theoretical model ONLY if interpolation/extrapolation falls strictly within the actual trial duration
         if reached and np.isfinite(emp_elapsed_int):
             effective_elapsed_int = emp_elapsed_int
             status_desc = f"Observed ({emp_elapsed:.1f}d)"
-        elif np.isfinite(theo_elapsed_int) and theo_elapsed <= max(14.0, max_trial_time * 2.0) and max_obs_mort >= (p * 0.5):
+        elif np.isfinite(theo_elapsed_int) and theo_elapsed <= max_trial_time and max_obs_mort >= (p * 0.5):
             effective_elapsed_int = theo_elapsed_int
             status_desc = f"Probit Model ({theo_elapsed:.1f}d)"
         else:

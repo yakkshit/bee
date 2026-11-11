@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from lifelines import KaplanMeierFitter
 from lifelines.statistics import multivariate_logrank_test
+from modules.core.cohort_manager import compute_adaptive_marker_sizes
 
 
 def render_multi_consumption_analysis(processed_batches, settings=None, multi_plot_images=None):
@@ -60,9 +61,9 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
     for b in batches_with_cons:
         d_mean = b.get('daily_mean_cons', np.array([]))
-        b_fname = b.get('filename') or b.get('orig_name') or b.get('name', 'Dataset')
+        b_disp = b.get('name') or b.get('key') or b.get('filename') or b.get('orig_name', 'Dataset')
         if len(d_mean) > 0:
-            cohort_avg_intakes.append((b_fname, float(np.mean(d_mean))))
+            cohort_avg_intakes.append((b_disp, float(np.mean(d_mean))))
         all_c = b.get('daily_all_cons', [])
         if all_c:
             total_cohort_intakes.append(float(np.sum(all_c)))
@@ -112,21 +113,27 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         show_sem_ribbon = st.checkbox("Show ± SEM Error Ribbons / Bars", value=True, key="multi_cons_sem_check")
         cohort_label_mode = st.radio(
             "Legend Labels:",
-            ["File Name", "Treatment Solution"],
+            ["Key / Display Name", "Treatment Solution (Code)", "File Name"],
             index=0,
             horizontal=True,
             key="multi_cons_lbl_mode",
-            help="Switch between raw CSV filenames and standardized treatment cohort names in plot legends."
+            help="Switch between dataset Keys (display names), standardized treatment cohort names, and raw filenames in plot legends."
         )
 
     use_alive_only = "Surviving" in calc_scope
 
     def get_c_label(b_item):
-        if cohort_label_mode == "Treatment Solution":
-            t_lbl = b_item.get('treatment') or b_item.get('cohort')
+        if cohort_label_mode == "Treatment Solution (Code)":
+            t_lbl = b_item.get('code_name') or b_item.get('cohort_name') or b_item.get('treatment') or b_item.get('cohort')
             if t_lbl and str(t_lbl).lower() not in ['none', 'blinded', 'nan', '']:
                 return str(t_lbl)
-        return b_item.get('filename') or b_item.get('orig_name') or b_item.get('name', 'Cohort')
+        elif cohort_label_mode == "File Name":
+            return b_item.get('filename') or b_item.get('orig_name') or b_item.get('name', 'Cohort')
+        # Default: Key / Display Name (e.g. 5% Acetone1, 50% Sucrose Solution)
+        disp_name = b_item.get('name') or b_item.get('key')
+        if disp_name and str(disp_name).strip():
+            return str(disp_name).strip()
+        return b_item.get('filename') or b_item.get('orig_name', 'Cohort')
 
     has_any_tcons = any(b.get('has_tconsumption', False) for b in batches_with_cons)
 
@@ -139,7 +146,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
     # PLOT 5.1: DAILY MEAN CONSUMPTION ACROSS ALL DAYS (LINE COMPARISON)
     # =========================================================================
     st.subheader("5.1 Daily Mean Consumption Across All Observation Days")
-    st.caption("Direct time-series comparison of daily consumption (µL/bee/day) across all cohorts, with shaded ± SEM uncertainty bands.")
+    st.caption("Direct time-series comparison of daily consumption (µL/bee/day) across all cohorts. Shaded ribbons depict ± Standard Error of Mean (SEM) uncertainty; sample degrees of freedom: $df = N_{\\mathrm{alive}} - 1$.")
 
     tab_l_sucrose, tab_l_tcons, tab_l_dual = st.tabs([
         "🍯 Daily Sucrose Trajectories (Cons)",
@@ -150,8 +157,19 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
     num_batches = len(batches_with_cons)
 
     with tab_l_sucrose:
-        fig_cons_lines, ax_cl = plt.subplots(figsize=(10.5, 6.0), dpi=300)
+        fig_cons_lines, ax_cl = plt.subplots(figsize=(10.5, 6.0), dpi=130)
         ax_cl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+
+        x_cons_all = [np.arange(1, b['num_days'] + 1) for b in batches_with_cons]
+        y_cons_all = [
+            b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
+            for b in batches_with_cons
+        ]
+        adaptive_sizes_cons = compute_adaptive_marker_sizes(
+            x_cons_all, y_cons_all,
+            base_size=marker_size, size_step=2.4,
+            tol_x=0.08, tol_y=0.45
+        )
 
         legend_handles_cons = []
         for idx, b in enumerate(batches_with_cons):
@@ -176,9 +194,16 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
             ax_cl.plot(
                 x_jittered, mean_series,
-                color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
-                linewidth=line_width, markersize=marker_size, markeredgecolor='black',
-                zorder=4
+                color=b['color'], linestyle=b['linestyle'],
+                linewidth=line_width, zorder=3
+            )
+            b_c_sz = adaptive_sizes_cons[idx]
+            ax_cl.scatter(
+                x_jittered, mean_series,
+                s=b_c_sz**2,
+                color=b['color'], marker=b['marker'],
+                edgecolor='black', linewidth=1.1,
+                zorder=4 + (num_batches - idx)
             )
 
             b_lbl = get_c_label(b)
@@ -213,8 +238,19 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
     with tab_l_tcons:
         if has_any_tcons:
-            fig_tcl_lines, ax_tcl = plt.subplots(figsize=(10.5, 6.0), dpi=300)
+            fig_tcl_lines, ax_tcl = plt.subplots(figsize=(10.5, 6.0), dpi=130)
             ax_tcl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+
+            x_tcons_all = [np.arange(1, b['num_days'] + 1) for b in batches_with_cons]
+            y_tcons_all = [
+                b.get('daily_alive_mean_tcons', b.get('daily_mean_tcons')) if use_alive_only else b.get('daily_mean_tcons')
+                for b in batches_with_cons
+            ]
+            adaptive_sizes_tcons = compute_adaptive_marker_sizes(
+                x_tcons_all, y_tcons_all,
+                base_size=marker_size, size_step=2.4,
+                tol_x=0.08, tol_y=0.45
+            )
 
             legend_handles_tcons = []
             for idx, b in enumerate(batches_with_cons):
@@ -239,9 +275,16 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
                 ax_tcl.plot(
                     x_jittered, mean_tseries,
-                    color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
-                    linewidth=line_width, markersize=marker_size, markeredgecolor='black',
-                    zorder=4
+                    color=b['color'], linestyle=b['linestyle'],
+                    linewidth=line_width, zorder=3
+                )
+                b_tc_sz = adaptive_sizes_tcons[idx]
+                ax_tcl.scatter(
+                    x_jittered, mean_tseries,
+                    s=b_tc_sz**2,
+                    color=b['color'], marker=b['marker'],
+                    edgecolor='black', linewidth=1.1,
+                    zorder=4 + (num_batches - idx)
                 )
 
                 b_lbl = get_c_label(b)
@@ -278,7 +321,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
     with tab_l_dual:
         if has_any_tcons:
-            fig_dual_l, (ax_dl1, ax_dl2) = plt.subplots(1, 2, figsize=(14.0, 5.5), dpi=300, sharex=True)
+            fig_dual_l, (ax_dl1, ax_dl2) = plt.subplots(1, 2, figsize=(14.0, 5.5), dpi=130, sharex=True)
             ax_dl1.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
             ax_dl2.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
@@ -300,13 +343,13 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
                 b_lbl = get_c_label(b)
                 handles_dual.append(Line2D([0], [0], color=b['color'], marker=b['marker'], linewidth=line_width, markersize=marker_size, markeredgecolor='black', label=b_lbl))
 
-            ax_dl1.set_title("🍯 Sucrose Consumption (Cons)", fontsize=12.5, fontweight='bold', pad=10)
+            ax_dl1.set_title("Sucrose Consumption (Cons)", fontsize=12.5, fontweight='bold', pad=10)
             ax_dl1.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
             ax_dl1.set_ylabel("Sucrose Intake (µL / bee)", fontsize=11.5, fontweight='bold')
             ax_dl1.spines['top'].set_visible(False)
             ax_dl1.spines['right'].set_visible(False)
 
-            ax_dl2.set_title("🧪 Treatment Solution Consumption (TCons)", fontsize=12.5, fontweight='bold', pad=10)
+            ax_dl2.set_title("Treatment Solution Consumption (TCons)", fontsize=12.5, fontweight='bold', pad=10)
             ax_dl2.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
             ax_dl2.set_ylabel("Treatment Intake (µL / bee)", fontsize=11.5, fontweight='bold')
             ax_dl2.spines['top'].set_visible(False)
@@ -333,7 +376,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
     # PLOT 5.2: DAY-BY-DAY GROUPED BAR CHART OF SUCROSE & TREATMENT CONSUMPTION
     # =========================================================================
     st.subheader("5.2 Day-by-Day Grouped Bar Chart Comparison")
-    st.caption("Granular day-by-day comparison of intake: directly compares the average intake across all cohorts on each individual experimental day.")
+    st.caption("Granular day-by-day comparison of intake: directly compares the average intake across all cohorts on each individual experimental day. Whiskers denote ± Standard Error of Mean (SEM); degrees of freedom: $df = N_{\\mathrm{alive}} - 1$.")
 
     tab_gb_sucrose, tab_gb_tcons, tab_gb_dual = st.tabs([
         "🍯 Sucrose Consumption (Cons)",
@@ -346,51 +389,161 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
     day_indices = np.arange(max_days_count)
 
     with tab_gb_sucrose:
-        fig_grouped_bars, ax_gb = plt.subplots(figsize=(11.5, 6.0), dpi=300)
-        ax_gb.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
-
-        for idx, b in enumerate(batches_with_cons):
-            mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
-            sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
-
-            padded_means = [mean_series[d] if d < len(mean_series) else 0.0 for d in range(max_days_count)]
-            padded_sems = [sem_series[d] if d < len(sem_series) else 0.0 for d in range(max_days_count)]
-
-            bar_positions = day_indices - (total_bar_width / 2.0) + (idx + 0.5) * single_bar_width
-
-            b_lbl = get_c_label(b)
-            bars = ax_gb.bar(
-                bar_positions, padded_means,
-                width=single_bar_width * 0.90,
-                yerr=padded_sems if show_sem_ribbon else None,
-                capsize=3.0,
-                color=b['color'], edgecolor='black', linewidth=1.0,
-                label=b_lbl,
-                zorder=3
+        col_gb_ctrl1, col_gb_ctrl2 = st.columns([2.5, 1.5])
+        with col_gb_ctrl1:
+            gb_view_opt = st.radio(
+                "Plot Layout Comparison Mode:",
+                [
+                    "📊 Grouped Bars (All-in-One)",
+                    "🗂️ Faceted Panels (Small Multiples - Overlap-Free)",
+                    "📈 Trajectory Lines with SEM Error Bars"
+                ],
+                index=0,
+                horizontal=True,
+                key="gb_sucrose_view_mode",
+                help="Switch between grouped bars, dedicated faceted panels for each cohort, or trajectory lines to eliminate bar crowding."
             )
+        with col_gb_ctrl2:
+            show_gb_whiskers = st.checkbox("Show ± SEM Error Whiskers", value=True, key="gb_sucrose_whiskers_chk")
 
-            if max_days_count <= 10:
-                for bar_i, bar in enumerate(bars):
-                    h = bar.get_height()
-                    if bar_i < len(mean_series):
-                        if h > 0.5:
-                            ax_gb.text(bar.get_x() + bar.get_width() / 2.0, h + 0.35, f"{h:.1f}",
-                                       ha='center', va='bottom', fontsize=7.5, fontweight='bold', color='#1e293b')
-                    else:
-                        ax_gb.text(bar.get_x() + bar.get_width() / 2.0, 0.2, "–",
-                                   ha='center', va='bottom', fontsize=8.0, fontweight='bold', color='#94a3b8')
+        if gb_view_opt == "🗂️ Faceted Panels (Small Multiples - Overlap-Free)":
+            # Faceted layout: one dedicated subplot per cohort, completely eliminating overlaps
+            n_facets = len(batches_with_cons)
+            n_cols = min(3, max(1, n_facets))
+            n_rows = (n_facets + n_cols - 1) // n_cols
+            fig_grouped_bars, axes_faceted = plt.subplots(n_rows, n_cols, figsize=(4.6 * n_cols, 3.6 * n_rows), dpi=130, sharey=True)
+            if n_facets == 1:
+                axes_list = [axes_faceted]
+            elif hasattr(axes_faceted, 'flatten'):
+                axes_list = list(axes_faceted.flatten())
+            else:
+                axes_list = list(axes_faceted)
 
-        ax_gb.set_xlabel('Observation Day', fontsize=12.5, fontweight='bold', labelpad=8)
-        ax_gb.set_ylabel('Sucrose Consumption (µL / bee)', fontsize=12.5, fontweight='bold', labelpad=8)
-        ax_gb.set_xticks(day_indices)
-        ax_gb.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
-        ax_gb.set_xlim(-0.6, max_days_count - 0.4)
-        ax_gb.set_ylim(0, None)
-        ax_gb.spines['top'].set_visible(False)
-        ax_gb.spines['right'].set_visible(False)
-        ax_gb.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.5)
-        fig_grouped_bars.tight_layout()
-        st.pyplot(fig_grouped_bars)
+            global_max_cons = max([max(b.get('daily_alive_mean_cons', b.get('daily_mean_cons', [5.0]))) for b in batches_with_cons], default=15.0)
+
+            for idx, b in enumerate(batches_with_cons):
+                ax_f = axes_list[idx]
+                mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
+                sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
+                d_count = len(mean_series)
+                d_x = np.arange(d_count)
+                b_lbl = get_c_label(b)
+
+                ax_f.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
+                ax_f.bar(
+                    d_x, mean_series,
+                    width=0.65,
+                    yerr=sem_series if (show_gb_whiskers and show_sem_ribbon) else None,
+                    capsize=2.2,
+                    error_kw=dict(elinewidth=0.9, ecolor='#0f172a', capthick=0.9),
+                    color=b['color'], edgecolor='black', linewidth=1.1,
+                    zorder=3
+                )
+                ax_f.set_title(b_lbl, fontsize=11.5, fontweight='bold', pad=8, color=b['color'])
+                ax_f.set_xticks(d_x)
+                ax_f.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"D{i+1}" for i in range(d_count)], rotation=45, ha='right', fontsize=8.5, fontweight='bold')
+                ax_f.set_ylim(0, global_max_cons * 1.25)
+                ax_f.spines['top'].set_visible(False)
+                ax_f.spines['right'].set_visible(False)
+
+                if idx % n_cols == 0:
+                    ax_f.set_ylabel('Sucrose Intake (µL / bee)', fontsize=10, fontweight='bold')
+                if idx >= (n_rows - 1) * n_cols:
+                    ax_f.set_xlabel('Observation Day', fontsize=10, fontweight='bold')
+
+            for un_i in range(n_facets, len(axes_list)):
+                axes_list[un_i].set_visible(False)
+
+            fig_grouped_bars.tight_layout()
+            st.pyplot(fig_grouped_bars)
+
+        elif gb_view_opt == "📈 Trajectory Lines with SEM Error Bars":
+            # Connected time-series line comparison with SEM whiskers
+            fig_grouped_bars, ax_ln = plt.subplots(figsize=(12.5, 5.8), dpi=130)
+            ax_ln.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+
+            for idx, b in enumerate(batches_with_cons):
+                mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
+                sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
+                b_lbl = get_c_label(b)
+                offset = (idx - (num_batches - 1) / 2.0) * jitter_val * 4.0
+                d_x = np.arange(1, len(mean_series) + 1) + offset
+
+                ax_ln.plot(
+                    d_x, mean_series,
+                    color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
+                    linewidth=line_width, markersize=marker_size, markeredgecolor='black',
+                    label=b_lbl, zorder=3
+                )
+                if show_gb_whiskers and show_sem_ribbon:
+                    ax_ln.errorbar(
+                        d_x, mean_series, yerr=sem_series,
+                        fmt='none', ecolor=b['color'], elinewidth=1.1, capsize=2.2, capthick=0.9, zorder=4
+                    )
+
+            ax_ln.set_xlabel('Observation Day', fontsize=12.5, fontweight='bold', labelpad=8)
+            ax_ln.set_ylabel('Sucrose Intake (µL / bee)', fontsize=12.5, fontweight='bold', labelpad=8)
+            ax_ln.set_xticks(np.arange(1, max_days_count + 1))
+            ax_ln.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
+            ax_ln.set_xlim(0.5, max_days_count + 0.5)
+            ax_ln.set_ylim(0, None)
+            ax_ln.spines['top'].set_visible(False)
+            ax_ln.spines['right'].set_visible(False)
+
+            fig_grouped_bars.subplots_adjust(left=0.08, right=0.76, top=0.92, bottom=0.14)
+            ax_ln.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+            st.pyplot(fig_grouped_bars)
+
+        else:
+            # 📊 Grouped Bars (All-in-One) with spacious canvas, sleek whiskers, and outside legend
+            fig_grouped_bars, ax_gb = plt.subplots(figsize=(13.0, 5.8), dpi=130)
+            ax_gb.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
+
+            for idx, b in enumerate(batches_with_cons):
+                mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
+                sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
+
+                padded_means = [mean_series[d] if d < len(mean_series) else 0.0 for d in range(max_days_count)]
+                padded_sems = [sem_series[d] if d < len(sem_series) else 0.0 for d in range(max_days_count)]
+
+                bar_positions = day_indices - (total_bar_width / 2.0) + (idx + 0.5) * single_bar_width
+
+                b_lbl = get_c_label(b)
+                bars = ax_gb.bar(
+                    bar_positions, padded_means,
+                    width=single_bar_width * 0.90,
+                    yerr=padded_sems if (show_gb_whiskers and show_sem_ribbon) else None,
+                    capsize=1.8,
+                    error_kw=dict(elinewidth=0.85, ecolor='#1e293b', capthick=0.85),
+                    color=b['color'], edgecolor='black', linewidth=1.0,
+                    label=b_lbl,
+                    zorder=3
+                )
+
+                if max_days_count <= 8:
+                    for bar_i, bar in enumerate(bars):
+                        h = bar.get_height()
+                        if bar_i < len(mean_series):
+                            if h > 0.5:
+                                ax_gb.text(bar.get_x() + bar.get_width() / 2.0, h + 0.35, f"{h:.1f}",
+                                           ha='center', va='bottom', fontsize=7.5, fontweight='bold', color='#1e293b')
+                        else:
+                            ax_gb.text(bar.get_x() + bar.get_width() / 2.0, 0.2, "–",
+                                       ha='center', va='bottom', fontsize=8.0, fontweight='bold', color='#94a3b8')
+
+            ax_gb.set_xlabel('Observation Day', fontsize=12.5, fontweight='bold', labelpad=8)
+            ax_gb.set_ylabel('Sucrose Consumption (µL / bee)', fontsize=12.5, fontweight='bold', labelpad=8)
+            ax_gb.set_xticks(day_indices)
+            ax_gb.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
+            ax_gb.set_xlim(-0.6, max_days_count - 0.4)
+            ax_gb.set_ylim(0, None)
+            ax_gb.spines['top'].set_visible(False)
+            ax_gb.spines['right'].set_visible(False)
+
+            # Outside legend to eliminate data bar overlap completely
+            fig_grouped_bars.subplots_adjust(left=0.07, right=0.76, top=0.92, bottom=0.14)
+            ax_gb.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+            st.pyplot(fig_grouped_bars)
 
         cohort_lengths = {get_c_label(b): len(b.get('daily_mean_cons', [])) for i, b in enumerate(batches_with_cons)}
         if len(set(cohort_lengths.values())) > 1:
@@ -407,7 +560,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
     with tab_gb_tcons:
         if has_any_tcons:
-            fig_tgb, ax_tgb = plt.subplots(figsize=(11.5, 6.0), dpi=300)
+            fig_tgb, ax_tgb = plt.subplots(figsize=(11.5, 6.0), dpi=130)
             ax_tgb.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
             for idx, b in enumerate(batches_with_cons):
@@ -449,8 +602,8 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             ax_tgb.set_ylim(0, None)
             ax_tgb.spines['top'].set_visible(False)
             ax_tgb.spines['right'].set_visible(False)
-            ax_tgb.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.5)
-            fig_tgb.tight_layout()
+            fig_tgb.subplots_adjust(left=0.07, right=0.76, top=0.92, bottom=0.14)
+            ax_tgb.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
             st.pyplot(fig_tgb)
 
             buf_tgb = io.BytesIO()
@@ -465,7 +618,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
     with tab_gb_dual:
         if has_any_tcons:
-            fig_dual_gb, (ax_dgb1, ax_dgb2) = plt.subplots(1, 2, figsize=(14.0, 5.8), dpi=300, sharex=True)
+            fig_dual_gb, (ax_dgb1, ax_dgb2) = plt.subplots(1, 2, figsize=(14.0, 5.8), dpi=130, sharex=True)
             ax_dgb1.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
             ax_dgb2.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
@@ -482,13 +635,13 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
                 ax_dgb1.bar(bar_pos, p_cons, width=single_bar_width * 0.90, color=b['color'], edgecolor='black', linewidth=1.0, label=b_lbl, zorder=3)
                 ax_dgb2.bar(bar_pos, p_tcons, width=single_bar_width * 0.90, color=b['color'], edgecolor='black', linewidth=1.0, label=b_lbl, zorder=3)
 
-            ax_dgb1.set_title("🍯 Sucrose Consumption (Cons)", fontsize=12.5, fontweight='bold', pad=10)
+            ax_dgb1.set_title("Sucrose Consumption (Cons)", fontsize=12.5, fontweight='bold', pad=10)
             ax_dgb1.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
             ax_dgb1.set_ylabel("Sucrose Intake (µL / bee)", fontsize=11.5, fontweight='bold')
             ax_dgb1.spines['top'].set_visible(False)
             ax_dgb1.spines['right'].set_visible(False)
 
-            ax_dgb2.set_title("🧪 Treatment Solution Consumption (TCons)", fontsize=12.5, fontweight='bold', pad=10)
+            ax_dgb2.set_title("Treatment Solution Consumption (TCons)", fontsize=12.5, fontweight='bold', pad=10)
             ax_dgb2.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
             ax_dgb2.set_ylabel("Treatment Intake (µL / bee)", fontsize=11.5, fontweight='bold')
             ax_dgb2.spines['top'].set_visible(False)
@@ -497,8 +650,8 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             ax_dgb1.set_xticks(day_indices)
             ax_dgb1.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=9.5, fontweight='bold')
 
-            ax_dgb1.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
-            fig_dual_gb.tight_layout()
+            fig_dual_gb.subplots_adjust(left=0.06, right=0.82, top=0.90, bottom=0.14)
+            ax_dgb2.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
             st.pyplot(fig_dual_gb)
 
             buf_dual_gb = io.BytesIO()
@@ -520,7 +673,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.3 Kaplan–Meier Feeding Persistence Curves")
         st.caption("Product-limit step curves for Feeding Cessation (Anorexia Endpoint). Event = Permanent cessation of sucrose feeding ($C \\le 0$).")
 
-        fig_km_multi_feed, ax_km_mf = plt.subplots(figsize=(8.0, 5.5), dpi=300)
+        fig_km_multi_feed, ax_km_mf = plt.subplots(figsize=(8.0, 5.5), dpi=130)
         ax_km_mf.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         kmf_feed_runner = KaplanMeierFitter()
@@ -538,12 +691,12 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
                 dur_feed = np.array([float(b['times_numeric'][-1])] * b['num_bees'])
                 ev_feed = np.zeros(b['num_bees'], dtype=int)
 
-            b_fname = b.get('filename') or b.get('orig_name') or b.get('name', f"Cohort {idx+1}")
+            b_lbl = get_c_label(b)
             all_durations_feed.extend(dur_feed)
-            all_groups_feed.extend([b_fname] * len(dur_feed))
+            all_groups_feed.extend([b_lbl] * len(dur_feed))
             all_events_feed.extend(ev_feed)
 
-            kmf_feed_runner.fit(dur_feed, event_observed=ev_feed, label=b_fname)
+            kmf_feed_runner.fit(dur_feed, event_observed=ev_feed, label=b_lbl)
             kmf_feed_runner.plot_survival_function(ax=ax_km_mf, color=b['color'], ci_show=True, ci_alpha=0.10, linewidth=2.2)
 
             # Mark censored bees (active feeders at end of bioassay)
@@ -555,7 +708,8 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             med_ft = kmf_feed_runner.median_survival_time_
             med_ft_str = f"{int(round(med_ft))}d" if np.isfinite(med_ft) and med_ft > 0 else "> Max Obs"
             ft50_summary.append({
-                "File Name": b_fname,
+                "Dataset / Key": b_lbl,
+                "File Name": b.get('filename', b['name']),
                 "Cohort": b.get('cohort_name', b['name']),
                 "Code": b['code_name'],
                 "Median Feeding Time (FT50)": med_ft_str,
@@ -604,7 +758,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.4 Cumulative Mean Sucrose Intake Over Days")
         st.caption("Cumulative average sucrose dose ingested per bee (µL) over the observation window across cohorts.")
 
-        fig_cum_intake, ax_ci = plt.subplots(figsize=(8.0, 5.5), dpi=300)
+        fig_cum_intake, ax_ci = plt.subplots(figsize=(8.0, 5.5), dpi=130)
         ax_ci.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         for b in batches_with_cons:
@@ -612,12 +766,12 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             if len(cum_series) == 0:
                 continue
             x_pts = np.arange(1, len(cum_series) + 1)
-            b_fname = b.get('filename') or b.get('orig_name') or b.get('name', f"Cohort {idx+1}")
+            b_lbl = get_c_label(b)
             ax_ci.plot(
                 x_pts, cum_series,
                 color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
                 linewidth=line_width, markersize=marker_size, markeredgecolor='black',
-                label=f"{b_fname} ({cum_series[-1]:.1f} µL)", zorder=3
+                label=f"{b_lbl} ({cum_series[-1]:.1f} µL)", zorder=3
             )
 
         ax_ci.set_xlabel('Observation Day', fontsize=11.5, fontweight='bold', labelpad=7)
@@ -650,8 +804,8 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.5 Cohort × Day Sucrose Intake Heatmap Matrix")
         st.caption("2D Heatmap matrix of average daily sucrose consumption (µL/bee) across all cohorts and days.")
 
-        fig_heat_multi, ax_hm_m = plt.subplots(figsize=(8.2, 5.2), dpi=300)
-        cohort_labels_rev = [b.get('filename') or b.get('orig_name') or b.get('name', f"Cohort {i+1}") for i, b in enumerate(reversed(batches_with_cons))]
+        fig_heat_multi, ax_hm_m = plt.subplots(figsize=(8.2, 5.2), dpi=130)
+        cohort_labels_rev = [get_c_label(b) for b in reversed(batches_with_cons)]
         heat_matrix = []
 
         for b in reversed(batches_with_cons):
@@ -706,7 +860,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
         st.subheader("5.6 Total Sucrose Intake vs. Survival Longevity")
         st.caption("Subject-level bioassay scatter: evaluates whether individual bee mortality was mediated by antifeedant starvation or direct chemical toxicity.")
 
-        fig_scatter_longev, ax_sl = plt.subplots(figsize=(8.2, 5.2), dpi=300)
+        fig_scatter_longev, ax_sl = plt.subplots(figsize=(8.2, 5.2), dpi=130)
         ax_sl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
         all_tot_cons = []
@@ -727,22 +881,41 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
                     edgecolors='black', linewidth=1.1, alpha=0.85, zorder=3
                 )
 
-                b_fname = b.get('filename') or b.get('orig_name') or b.get('name', f"Cohort {idx+1}")
+                b_lbl = get_c_label(b)
                 scatter_legend_handles.append(
                     Line2D([0], [0], marker=b['marker'], color='w', markerfacecolor=b['color'],
-                           markeredgecolor='black', markersize=7.5, label=b_fname)
+                           markeredgecolor='black', markersize=7.5, label=b_lbl)
                 )
 
-        # Global regression line
+        # Global regression line with 95% Confidence Interval ribbon
         if len(all_tot_cons) > 3 and np.std(all_tot_cons) > 1e-4:
             from scipy.stats import linregress
             res_tot = linregress(all_tot_cons, all_durations_tot)
-            x_line = np.linspace(min(all_tot_cons), max(all_tot_cons), 50)
+            x_line = np.linspace(min(all_tot_cons), max(all_tot_cons), 100)
             y_line = res_tot.intercept + res_tot.slope * x_line
-            ax_sl.plot(x_line, y_line, color='#0f172a', linestyle='--', linewidth=1.8, zorder=2)
+            ax_sl.plot(x_line, y_line, color='#0f172a', linestyle='--', linewidth=1.8, zorder=3)
+
+            n_tot_pts = len(all_tot_cons)
+            df_scatter = max(1, n_tot_pts - 2)
+            se_slope_tot = res_tot.stderr if hasattr(res_tot, 'stderr') and res_tot.stderr is not None else 0.0
+
+            # 95% Confidence Interval band around regression line
+            x_arr = np.array(all_tot_cons, dtype=float)
+            y_arr = np.array(all_durations_tot, dtype=float)
+            y_pred_arr = res_tot.intercept + res_tot.slope * x_arr
+            s_err_tot = np.sqrt(np.sum((y_arr - y_pred_arr)**2) / df_scatter)
+            x_bar_tot = np.mean(x_arr)
+            ss_x_tot = np.sum((x_arr - x_bar_tot)**2)
+            if ss_x_tot > 1e-9:
+                se_line = s_err_tot * np.sqrt(1.0 / n_tot_pts + (x_line - x_bar_tot)**2 / ss_x_tot)
+            else:
+                se_line = np.full_like(x_line, max(0.1, s_err_tot))
+            ci_line = 1.96 * se_line
+            ax_sl.fill_between(x_line, y_line - ci_line, y_line + ci_line, color='#0f172a', alpha=0.10, zorder=2)
+
             scatter_legend_handles.append(
                 Line2D([0], [0], color='#0f172a', linestyle='--', linewidth=1.8,
-                       label=f"Fit (r = {res_tot.rvalue:.3f}, p = {res_tot.pvalue:.3f})")
+                       label=f"Fit (r={res_tot.rvalue:.3f}, SE={se_slope_tot:.3f}, df={df_scatter}, p={res_tot.pvalue:.3g})")
             )
 
         ax_sl.set_xlabel('Total Sucrose Consumed (µL)', fontsize=11.5, fontweight='bold', labelpad=7)
@@ -786,13 +959,15 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             peak_str = "N/A"
 
         # FT50
-        b_fname = b.get('filename') or b.get('orig_name') or b.get('name', f"Cohort {idx_b+1}")
-        ft_info = next((item for item in ft50_summary if item.get('File Name') == b_fname or item.get('Cohort') == b['name']), None)
+        b_lbl = get_c_label(b)
+        b_fname = b.get('filename', b['name'])
+        ft_info = next((item for item in ft50_summary if item.get('Dataset / Key') == b_lbl or item.get('File Name') == b_fname or item.get('Cohort') == b['name']), None)
         ft50_str = ft_info['Median Feeding Time (FT50)'] if ft_info else "N/A"
         cess_count = ft_info['Ceased Feeding'] if ft_info else 0
         cess_rate = f"{(cess_count / n_b * 100.0):.1f}%" if n_b > 0 else "0.0%"
 
         summary_cons_rows.append({
+            "Dataset / Key": b_lbl,
             "File Name": b_fname,
             "Cohort Name": b.get('cohort_name', b['name']),
             "Code Name": b['code_name'],

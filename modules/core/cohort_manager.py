@@ -9,6 +9,15 @@ import re
 import numpy as np
 import pandas as pd
 
+try:
+    import streamlit as st
+    cache_data_fn = st.cache_data
+except Exception:
+    def cache_data_fn(func=None, **kwargs):
+        if func is not None:
+            return func
+        return lambda f: f
+
 # The 4 official agreed cohorts
 COHORT_SUCROSE_2UL = "sucrose solution 2 microliter"
 COHORT_ACETONE_5PCT_2UL = "5 % acetone 2 microliter"
@@ -63,11 +72,17 @@ COHORT_MARKERS = {
 def extract_key_from_df(df) -> str:
     """
     Extracts non-empty key value from DataFrame if a 'key' column exists.
+    Strictly prioritizes Day 1 (first row) per bioassay standard, falling back
+    to first non-empty entry only if Day 1 was blank.
     Returns empty string if column is absent or all values are empty / blank / NaN.
     """
     if df is not None and isinstance(df, pd.DataFrame):
         for col in df.columns:
             if str(col).strip().lower() == 'key':
+                if len(df) > 0:
+                    d1_val = str(df[col].iloc[0]).strip()
+                    if d1_val and d1_val.lower() not in ['nan', 'none', 'null', '']:
+                        return d1_val
                 vals = [str(x).strip() for x in df[col].dropna() if str(x).strip() and str(x).strip().lower() not in ['nan', 'none', 'null', '']]
                 if vals:
                     return vals[0]
@@ -258,6 +273,7 @@ def _attach_consumption_to_cohort(raw_csv_str: str, base_intake: float, intake_s
     return df[[c for c in new_cols if c in df.columns]]
 
 
+@cache_data_fn(show_spinner=False)
 def get_default_4_cohort_dataframes():
     """
     Generates realistic, validated post-2h starvation observation dataframes
@@ -348,4 +364,64 @@ def get_active_cohort_dictionary(uploaded_file_dict=None):
         return get_default_4_cohort_dataframes()
 
     return active_dict
+
+
+def compute_adaptive_marker_sizes(x_series_list, y_series_list, base_size=7.5, size_step=3.0, tol_x=0.03, tol_y=0.15):
+    """
+    Detects overlapping or colliding coordinates across multiple data series.
+    When observation points from different batches share similar (x, y) coordinates,
+    allocates tiered marker sizes (earlier/underlying series get stepped up in size)
+    so concentric nested glyphs are formed and all cohort symbols remain fully visible.
+
+    Args:
+        x_series_list: list of array-like x-coordinates for each series
+        y_series_list: list of array-like y-coordinates for each series
+        base_size: default marker diameter size in points (e.g. 7.0)
+        size_step: incremental size increase for each overlapping layer (e.g. 3.0)
+        tol_x: coordinate tolerance in x dimension
+        tol_y: coordinate tolerance in y dimension
+
+    Returns:
+        list of 1D numpy arrays containing marker diameter size (in points) for each point in each series.
+    """
+    n_series = len(x_series_list)
+    result_sizes = [np.full(len(x_series_list[i]), float(base_size), dtype=float) for i in range(n_series)]
+
+    # Collect valid coordinate points: (series_idx, point_idx, x, y)
+    all_pts = []
+    for s_idx in range(n_series):
+        xs = np.array(x_series_list[s_idx], dtype=float)
+        ys = np.array(y_series_list[s_idx], dtype=float)
+        n_p = min(len(xs), len(ys))
+        for p_idx in range(n_p):
+            if np.isfinite(xs[p_idx]) and np.isfinite(ys[p_idx]):
+                all_pts.append((s_idx, p_idx, float(xs[p_idx]), float(ys[p_idx])))
+
+    # Cluster nearby points across different series
+    visited = set()
+    for i in range(len(all_pts)):
+        if i in visited:
+            continue
+        cluster = [all_pts[i]]
+        visited.add(i)
+        s_i, p_i, x_i, y_i = all_pts[i]
+        for j in range(i + 1, len(all_pts)):
+            if j in visited:
+                continue
+            s_j, p_j, x_j, y_j = all_pts[j]
+            if s_i == s_j:
+                continue
+            if abs(x_i - x_j) <= tol_x and abs(y_i - y_j) <= tol_y:
+                cluster.append(all_pts[j])
+                visited.add(j)
+
+        if len(cluster) > 1:
+            # Sort cluster by series index (earlier drawn series gets larger marker size)
+            cluster.sort(key=lambda item: item[0])
+            m = len(cluster)
+            for rank, (s_idx, p_idx, _, _) in enumerate(cluster):
+                alloc_size = float(base_size) + (m - 1 - rank) * float(size_step)
+                result_sizes[s_idx][p_idx] = alloc_size
+
+    return result_sizes
 

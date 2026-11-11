@@ -113,7 +113,8 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
         st.markdown(f'<div class="kpi-card"><div class="kpi-val">{c_index:.3f}</div><div class="kpi-label">Concordance Index (C-index)</div></div>', unsafe_allow_html=True)
     with ck2:
         lrt_p_str = "< 0.0001" if lrt.p_value < 0.0001 else f"{lrt.p_value:.4f}"
-        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{lrt.test_statistic:.2f} (p={lrt_p_str})</div><div class="kpi-label">Likelihood Ratio Test (χ²)</div></div>', unsafe_allow_html=True)
+        df_model = len(covariate_cols)
+        st.markdown(f'<div class="kpi-card"><div class="kpi-val">{lrt.test_statistic:.2f} (df={df_model}, p={lrt_p_str})</div><div class="kpi-label">Likelihood Ratio Test (χ²)</div></div>', unsafe_allow_html=True)
     with ck3:
         st.markdown(f'<div class="kpi-card"><div class="kpi-val">{aic_val:.2f}</div><div class="kpi-label">Partial AIC</div></div>', unsafe_allow_html=True)
     with ck4:
@@ -141,6 +142,7 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
             "CI Margin (±)": 0.0,
             "Std Error (SE)": 0.0,
             "Wald z": 0.0,
+            "df": 1,
             "p-value": "1.00 (Ref)",
             "Significance": "⚪ Reference Baseline",
             "is_reference": True
@@ -193,7 +195,8 @@ def render_cox_regression_analysis(survival_df, group_col='cohort', reference_gr
             "CI Margin (±)": ci_margin,
             "Std Error (SE)": round(se_val, 4),
             "Wald z": round(z_v, 3),
-            "p-value": f"{p_v:.4g}",
+            "df": 1,
+            "p-value": f"{p_v:.4f}" if p_v >= 0.0001 else "< 0.0001",
             "Significance": sig_str,
             "is_reference": False
         })

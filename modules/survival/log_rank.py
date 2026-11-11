@@ -105,8 +105,8 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
         ])
 
         with lr_tab_hz:
-            # Cumulative Hazard Plot: H(t) via Nelson-Aalen Estimator (Matching Publication Benchmark)
-            fig_hz, ax_hz = plt.subplots(figsize=(9.5, 5.0), dpi=300)
+            # Cumulative Hazard Plot: H(t) via Nelson-Aalen Estimator (Matching Publication Benchmark, 130 DPI for rapid on-screen reactivity)
+            fig_hz, ax_hz = plt.subplots(figsize=(9.5, 5.0), dpi=130)
 
             for idx_g, g in enumerate(groups):
                 m = (G == g)
@@ -118,11 +118,22 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
                 ch_df = naf_hz.cumulative_hazard_
                 timeline = ch_df.index.values
                 ch_vals = ch_df.iloc[:, 0].values
+
+                # Plot shaded 95% Confidence Interval band for cumulative hazard
+                ci_hz = naf_hz.confidence_interval_cumulative_hazard_
+                if not ci_hz.empty:
+                    ax_hz.fill_between(
+                        ci_hz.index.values,
+                        ci_hz.iloc[:, 0].values,
+                        ci_hz.iloc[:, 1].values,
+                        step='post', color=col, alpha=0.10, zorder=2
+                    )
+
                 # Step curve starting strictly from baseline t=0, H=0
                 if len(timeline) > 0 and timeline[0] > 0:
                     timeline = np.insert(timeline, 0, 0.0)
                     ch_vals = np.insert(ch_vals, 0, 0.0)
-                ax_hz.step(timeline, ch_vals, where='post', color=col, linewidth=2.4, label=g)
+                ax_hz.step(timeline, ch_vals, where='post', color=col, linewidth=2.4, label=g, zorder=3)
 
             ax_hz.spines['left'].set_linewidth(1.8)
             ax_hz.spines['bottom'].set_linewidth(1.8)
@@ -132,7 +143,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
 
             ax_hz.set_xlabel('Elapsed Observation Time (Days)', fontsize=12, fontweight='bold', labelpad=8)
             ax_hz.set_ylabel('Cumulative Hazard H(t) = -ln Ŝ(t)', fontsize=12, fontweight='bold', labelpad=8)
-            ax_hz.set_title(f'Log-Rank Cumulative Hazard Curves H(t) Across Cohorts (χ² = {chisq:.3f}, p = {p_str})', fontsize=12.5, fontweight='bold', pad=12)
+            ax_hz.set_title(f'Log-Rank Cumulative Hazard Curves H(t) Across Cohorts (χ² = {chisq:.3f}, df = {df_val}, p = {p_str})', fontsize=12.5, fontweight='bold', pad=12)
             ax_hz.legend(loc='upper left', frameon=True, facecolor='white', framealpha=0.95, edgecolor='#cbd5e1', fontsize=9.5)
             fig_hz.tight_layout()
 
@@ -145,7 +156,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             plt.close(fig_hz)
 
         with lr_tab_oe:
-            fig_lr, ax_lr = plt.subplots(figsize=(9.2, 5.0), dpi=300)
+            fig_lr, ax_lr = plt.subplots(figsize=(9.2, 5.0), dpi=130)
             ax_lr.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
             x_indices = np.arange(len(groups))
@@ -174,7 +185,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             ax_lr.set_xticks(x_indices)
             ax_lr.set_xticklabels(groups, fontsize=10.5, fontweight='bold', rotation=15, ha='right')
             ax_lr.set_ylim(0, max_y * 1.25)
-            ax_lr.set_title(f'Log-Rank Test: Observed vs. Expected Deaths Under H₀ (χ² = {chisq:.3f}, p = {p_str})', fontsize=12.5, fontweight='bold', pad=12)
+            ax_lr.set_title(f'Log-Rank Test: Observed vs. Expected Deaths Under H₀ (χ² = {chisq:.3f}, df = {df_val}, p = {p_str})', fontsize=12.5, fontweight='bold', pad=12)
             ax_lr.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.92, fontsize=10)
             ax_lr.spines['top'].set_visible(False)
             ax_lr.spines['right'].set_visible(False)
@@ -191,20 +202,31 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
         # Observed vs. Expected Data Table
         st.markdown("#### 📊 Mantel-Cox Observed vs. Expected Breakdown")
         oe_table = []
+        n_total_pop = len(T)
         for g in groups:
             o_c = obs_dict[g]
             e_c = exp_dict[g]
             oe_ratio = o_c / e_c if e_c > 0 else 1.0
             diff = o_c - e_c
             contrib = (diff**2) / e_c if e_c > 0 else 0.0
+            # Under H0, variance of O - E: V ≈ E * (1 - E / N)
+            v_c = max(0.05, e_c * (1.0 - (e_c / max(1, n_total_pop))))
+            se_diff = np.sqrt(v_c)
+            wald_z = diff / se_diff if se_diff > 0 else 0.0
+            ci_diff_l = diff - 1.96 * se_diff
+            ci_diff_u = diff + 1.96 * se_diff
             oe_table.append({
                 "Cohort": g,
                 "Observed Deaths (O)": o_c,
                 "Expected Deaths (E)": f"{e_c:.2f}",
                 "O - E Deviation": f"{diff:+.2f}",
+                "Std Error (SE)": f"{se_diff:.2f}",
+                "95% CI (O - E)": f"[{ci_diff_l:+.1f}, {ci_diff_u:+.1f}]",
+                "Wald z": f"{wald_z:+.2f}",
                 "O / E Ratio": f"{oe_ratio:.2f}",
-                "Relative Risk Status": "🟢 Protected (Fewer Deaths)" if oe_ratio < 1.0 else "🔴 Elevated Hazard (Excess Deaths)",
-                "Chi² Contribution ((O-E)²/E)": f"{contrib:.3f}"
+                "Chi² Contribution ((O-E)²/E)": f"{contrib:.3f}",
+                "df": 1,
+                "Relative Risk Status": "🟢 Protected (Fewer Deaths)" if oe_ratio < 1.0 else "🔴 Elevated Hazard (Excess Deaths)"
             })
         st.dataframe(pd.DataFrame(oe_table), use_container_width=True)
 

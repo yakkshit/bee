@@ -20,6 +20,7 @@ from modules.parser import (
     extract_individual_bee_survival,
     extract_key_from_df,
     get_dataset_key_or_filename,
+    compute_adaptive_marker_sizes,
     AGREED_COHORTS,
     ALL_COHORT_OPTIONS,
     COHORT_CODE_NAMES,
@@ -41,6 +42,21 @@ from modules.survival_stats import (
 from modules.multi_batch_consumption import render_multi_consumption_analysis
 
 
+@st.cache_data(show_spinner=False)
+def load_and_standardize_uploaded_file(file_bytes: bytes, filename: str):
+    """
+    Caches uploaded CSV reading and standardization.
+    Ensures file parsing occurs once in memory and is reused across UI interactions.
+    """
+    import io
+    try:
+        b_raw = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python')
+    except Exception:
+        b_raw = pd.read_csv(io.BytesIO(file_bytes))
+    b_clean = standardize_observation_df(b_raw)
+    b_clean = b_clean.astype(str)
+    b_clean.replace("nan", "", inplace=True)
+    return b_clean
 
 
 def render_multi_batch_tab(settings=None):
@@ -95,15 +111,7 @@ def render_multi_batch_tab(settings=None):
             new_batch_added = False
             for f in uploaded_batches:
                 try:
-                    f.seek(0)
-                    try:
-                        b_raw = pd.read_csv(f, sep=None, engine='python')
-                    except Exception:
-                        f.seek(0)
-                        b_raw = pd.read_csv(f)
-                    b_clean = standardize_observation_df(b_raw)
-                    b_clean = b_clean.astype(str)
-                    b_clean.replace("nan", "", inplace=True)
+                    b_clean = load_and_standardize_uploaded_file(f.getvalue(), f.name)
                     key_val = extract_key_from_df(b_clean)
                     ident_name = key_val if key_val else f.name
                     norm_name = clean_cohort_name(ident_name, b_clean, fallback_to_blinded=True)
@@ -193,13 +201,30 @@ def render_multi_batch_tab(settings=None):
             with col_ctrl1:
                 jitter_val = st.slider("Point Separation / Anti-Overlap Offset", min_value=0.0, max_value=0.05, value=0.015, step=0.003, help="Offsets data points horizontally side-by-side so markers from different CSV files don't overlap directly on top of each other.")
             with col_ctrl2:
-                legend_loc_opt = st.selectbox("Legend Placement", ["Top (Horizontal)", "Bottom (Horizontal)", "Right (Outside)"], index=0)
+                legend_loc_opt = st.selectbox("Legend Placement", ["Right (Outside)", "Top (Horizontal)", "Bottom (Horizontal)"], index=0)
             with col_ctrl3:
                 show_grid = st.checkbox("Show Chart Gridlines", value=True)
 
             st.markdown("---")
             batch_config = []
             b_keys = list(raw_batch_dict.keys())
+            used_colors_multi = set()
+            used_markers_multi = set()
+            DISTINCT_MULTI_PALETTE = [
+                "#0284c7",  # Sky blue
+                "#059669",  # Emerald green
+                "#d97706",  # Amber / warm gold
+                "#dc2626",  # Red
+                "#7c3aed",  # Purple
+                "#0891b2",  # Cyan / teal
+                "#db2777",  # Pink / rose
+                "#ea580c",  # Bright orange
+                "#16a34a",  # Forest green
+                "#4f46e5",  # Indigo
+                "#ca8a04",  # Dark yellow
+                "#64748b"   # Slate grey
+            ]
+            DISTINCT_MARKER_LIST = list(MARKER_OPTIONS.values())
 
             c_cols = st.columns(min(4, max(1, len(b_keys))))
             for idx, orig_name in enumerate(b_keys):
@@ -252,19 +277,31 @@ def render_multi_batch_tab(settings=None):
 
                     custom_label = st.text_input("Display Label (Plot Legend)", value=auto_label, key=f"bname_{idx}_{legend_format}")
 
-                    if cohort_choice in AGREED_COHORTS:
-                        default_c = COHORT_PALETTE[cohort_choice]
-                        pref_marker = COHORT_MARKERS[cohort_choice]
-                    else:
-                        default_c = DEFAULT_COLORS[idx % len(DEFAULT_COLORS)]
-                        pref_marker = list(MARKER_OPTIONS.values())[idx % len(MARKER_OPTIONS)]
+                    # Guarantee distinct color per object: assign distinct color by index
+                    avail_cols = [c for c in DISTINCT_MULTI_PALETTE if c not in used_colors_multi]
+                    default_c = avail_cols[0] if avail_cols else DISTINCT_MULTI_PALETTE[idx % len(DISTINCT_MULTI_PALETTE)]
 
-                    custom_color = st.color_picker("Color", default_c, key=f"bcol_{idx}")
+                    # Guarantee distinct marker per object: assign distinct marker by index
+                    avail_markers = [m for m in DISTINCT_MARKER_LIST if m not in used_markers_multi]
+                    pref_marker = avail_markers[0] if avail_markers else DISTINCT_MARKER_LIST[idx % len(DISTINCT_MARKER_LIST)]
+
+                    custom_color = st.color_picker("Color", default_c, key=f"bcol_{orig_name}_{idx}")
+                    # If this color was already taken by another dataset in this session, fallback to unused distinct color
+                    if custom_color in used_colors_multi:
+                        avail_cols = [c for c in DISTINCT_MULTI_PALETTE if c not in used_colors_multi]
+                        custom_color = avail_cols[0] if avail_cols else DISTINCT_MULTI_PALETTE[idx % len(DISTINCT_MULTI_PALETTE)]
+                    used_colors_multi.add(custom_color)
 
                     pref_shape_name = next((k for k, v in MARKER_OPTIONS.items() if v == pref_marker), None) if pref_marker else None
                     default_shape_idx = marker_names.index(pref_shape_name) if pref_shape_name in marker_names else (idx % len(marker_names))
-                    custom_shape_name = st.selectbox("Shape (Marker)", marker_names, index=default_shape_idx, key=f"bshape_{idx}")
+                    custom_shape_name = st.selectbox("Shape (Marker)", marker_names, index=default_shape_idx, key=f"bshape_{orig_name}_{idx}")
                     custom_shape = MARKER_OPTIONS[custom_shape_name]
+                    if custom_shape in used_markers_multi:
+                        avail_m_names = [k for k, v in MARKER_OPTIONS.items() if v not in used_markers_multi]
+                        if avail_m_names:
+                            custom_shape_name = avail_m_names[0]
+                            custom_shape = MARKER_OPTIONS[custom_shape_name]
+                    used_markers_multi.add(custom_shape)
 
                     custom_line_name = st.selectbox("Line Style", list(LINE_STYLES.keys()), index=0, key=f"bline_{idx}")
                     custom_linestyle = LINE_STYLES[custom_line_name]
@@ -279,14 +316,17 @@ def render_multi_batch_tab(settings=None):
                         'marker': custom_shape,
                         'marker_name': custom_shape_name,
                         'linestyle': custom_linestyle,
-                        'raw_df': raw_batch_dict[orig_name]
+                        'raw_df': raw_batch_dict[orig_name],
+                        'key': key_val
                     })
 
 
         processed_batches = []
         for bcfg in batch_config:
             p_res = parse_batch_df(bcfg['raw_df'], abbott_c=abbott_c)
-            p_res.update({
+            # Shallow copy to prevent mutating cached dictionary
+            p_item = dict(p_res)
+            p_item.update({
                 'orig_name': bcfg['orig_name'],
                 'filename': bcfg['filename'],
                 'name': bcfg['name'],
@@ -295,14 +335,17 @@ def render_multi_batch_tab(settings=None):
                 'color': bcfg['color'],
                 'marker': bcfg['marker'],
                 'linestyle': bcfg['linestyle'],
-                'raw_df': bcfg['raw_df']
+                'raw_df': bcfg['raw_df'],
+                'key': bcfg.get('key', '')
             })
-            if 'individual_bees' in p_res and isinstance(p_res['individual_bees'], pd.DataFrame):
-                p_res['individual_bees']['cohort'] = bcfg['name']
-                p_res['individual_bees']['filename'] = bcfg['filename']
-                p_res['individual_bees']['cohort_code'] = bcfg['code_name']
-                p_res['individual_bees']['color'] = bcfg['color']
-            processed_batches.append(p_res)
+            if 'individual_bees' in p_item and isinstance(p_item['individual_bees'], pd.DataFrame):
+                indiv_df = p_item['individual_bees'].copy()
+                indiv_df['cohort'] = bcfg['name']
+                indiv_df['filename'] = bcfg['filename']
+                indiv_df['cohort_code'] = bcfg['code_name']
+                indiv_df['color'] = bcfg['color']
+                p_item['individual_bees'] = indiv_df
+            processed_batches.append(p_item)
 
         st.session_state['processed_batches'] = processed_batches
 
@@ -325,109 +368,320 @@ def render_multi_batch_tab(settings=None):
 
         st.markdown("<br>", unsafe_allow_html=True)
 
+        # Educational Bioassay Statistics Guide
+        with st.expander("💡 Statistical Guide: Understanding SD, SE, 95% CI & Degrees of Freedom (df)", expanded=False):
+            st.markdown(r"""
+            ### 🔬 Standard Deviation vs Standard Error: What is the Difference?
+
+            | Statistical Concept | Mathematical Definition | Bioassay Interpretation (Bee Trials) | Where It Is Used in This Studio |
+            | :--- | :--- | :--- | :--- |
+            | **Standard Deviation (SD)** | $\\mathrm{SD} = \\sqrt{\\frac{\\sum (x_i - \\bar{x})^2}{N - 1}}$ | **Biological Diversity / Individual Variation**: How widely individual bees differ from the group average (e.g., variation in individual sucrose consumption). Adding more bees does *not* make SD shrink to 0. | Daily consumption variability, environmental variance. |
+            | **Standard Error (SE / SEM)** | $\\mathrm{SE} = \\frac{\\mathrm{SD}}{\\sqrt{N}}$ | **Estimation Precision of the Mean**: How accurately your experimental sample reflects the *true population average*. Shrinks towards 0 as sample size $N$ increases. | Error whiskers on Mortality trajectories ($\pm \\mathrm{SE}$), Survival curves ($\pm \\mathrm{SE}$), Probit slope uncertainty $\\mathrm{SE}(b)$. |
+            | **95% Confidence Interval (95% CI)** | $95\\%\\,\\mathrm{CI} = \\bar{x} \\pm 1.96 \\cdot \\mathrm{SE}$ | **Plausible Parameter Range**: With 95% statistical certainty, the true population mean falls within this range. | Shaded ribbons on Probit regression lines, shaded confidence bands on survival curves, LT50 whiskers. |
+            | **Degrees of Freedom ($df$)** | $df = N - 1$ (Sample)<br>$df = N_{\\mathrm{points}} - 2$ (Probit) | **Independent Information**: Number of data points that are free to vary after fitting estimated statistical parameters. | Sample $df = N - 1$ on mortality curves; regression $df = N_{\\mathrm{points}} - 2$ on Probit equations ($Y = a + bx$). |
+            """)
+
         multi_plot_images = {}
         num_files = len(processed_batches)
 
-        # 1. Probit Regression CSV File Comparison Plot
+        # 1. Probit Regression CSV File Comparison Plot (130 DPI for rapid on-screen reactivity)
         st.subheader("1. Probit Regression Time-Mortality Comparison Across CSV Files")
-        fig_p_multi, ax_p = plt.subplots(figsize=(10.5, 6.0), dpi=300)
+        st.caption("Fitted Probit regression lines ($Y = a + bx$) across all CSV files with shaded 95% Confidence Interval ribbons, slope standard error SE(b), and residual degrees of freedom ($df = N_{points} - 2$).")
 
-        if show_grid:
-            ax_p.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+        col_pr1, col_pr2 = st.columns([1.6, 1.4])
+        with col_pr1:
+            probit_view_mode = st.radio(
+                "Probit Plot Presentation:",
+                ["All-in-One Overlay (Comparative)", "Faceted Subplots (Small Multiples - Uncluttered Per-Cohort Grid)"],
+                horizontal=True,
+                key="multi_probit_view_mode"
+            )
+        with col_pr2:
+            probit_x_range_opt = st.radio(
+                "Probit X-Axis (Log10 Time) Range:",
+                ["Extend to -0.25 (Sub-day / early post-starvation)", "Observed Data Range (Day 1 baseline)"],
+                horizontal=True,
+                key="multi_probit_x_range_opt"
+            )
 
         all_log_times = []
         for b in processed_batches:
             if len(b['log_time']) > 0:
                 all_log_times.extend(b['log_time'])
 
-        x_min = max(-0.02, min(all_log_times) - 0.04) if all_log_times else 0.0
-        x_max = max(all_log_times) + 0.08 if all_log_times else 1.0
-        x_fit_line = np.linspace(x_min, x_max, 100)
+        min_log = min(all_log_times) if all_log_times else 0.0
+        max_log = max(all_log_times) if all_log_times else 1.0
 
-        legend_handles_probit = []
+        if probit_x_range_opt.startswith("Extend to -0.25"):
+            x_min = min(-0.25, min_log - 0.04) if min_log < -0.25 else -0.25
+        else:
+            x_min = max(-0.02, min_log - 0.04) if all_log_times else 0.0
 
-        for idx, b in enumerate(processed_batches):
-            offset = (idx - (num_files - 1) / 2.0) * jitter_val
-            x_jittered = b['log_time'] + offset
+        x_max = max(max_log + 0.08, 1.25)
+        x_fit_line = np.linspace(x_min, x_max, 120)
 
-            ax_p.scatter(
-                x_jittered, b['probit_y'],
-                color=b['color'], marker=b['marker'],
-                s=marker_size**2 * 1.5, edgecolor='black', linewidth=1.1,
-                zorder=4
-            )
-
-            if len(b['log_time']) > 1:
-                y_fit_line = b['intercept_a'] + b['slope_b'] * x_fit_line
-                ax_p.plot(
-                    x_fit_line, y_fit_line,
-                    color=b['color'], linestyle=b['linestyle'], linewidth=line_width,
-                    zorder=3
-                )
-
-            if "Equation + R²" in legend_detail:
-                lbl = f"{b['name']} (Y={b['intercept_a']:.2f}+{b['slope_b']:.2f}x, R²={b['r_squared']:.4f})"
-            elif "R² Only" in legend_detail:
-                lbl = f"{b['name']} (R²={b['r_squared']:.4f})"
-            else:
-                lbl = b['name']
-
-            legend_handles_probit.append(
-                Line2D([0], [0], color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
-                       linewidth=line_width, markersize=marker_size, markeredgecolor='black',
-                       label=lbl)
-            )
-
-        legend_handles_probit.append(
-            Line2D([0], [0], color='#64748b', linestyle='--', linewidth=1.5, label='LT50 Reference (Probit = 5.0)')
+        # Smart adaptive anti-overlap marker sizing across all cohorts
+        probit_x_all = [b['log_time'] for b in processed_batches]
+        probit_y_all = [b['probit_y'] for b in processed_batches]
+        adaptive_sizes_probit = compute_adaptive_marker_sizes(
+            probit_x_all, probit_y_all,
+            base_size=marker_size, size_step=2.6,
+            tol_x=0.025, tol_y=0.12
         )
 
-        ax_p.axhline(5.0, color='#64748b', linestyle='--', linewidth=1.5, zorder=2)
-        ax_p.set_xlim(x_min, x_max)
-        ax_p.set_ylim(2.5, 9.2)
-        ax_p.yaxis.set_major_locator(MultipleLocator(1.0))
+        if probit_view_mode == "All-in-One Overlay (Comparative)":
+            fig_p_multi, ax_p = plt.subplots(figsize=(10.5, 6.0), dpi=130)
 
-        ax_p.set_xlabel('Log10(Observation Time / Days)', fontsize=12.5, fontweight='bold', labelpad=8)
-        ax_p.set_ylabel('Probit Value (P)', fontsize=12.5, fontweight='bold', labelpad=8)
-        ax_p.spines['top'].set_visible(False)
-        ax_p.spines['right'].set_visible(False)
+            if show_grid:
+                ax_p.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
-        if legend_loc_opt == "Top (Horizontal)":
-            num_cols = min(3, max(1, num_files + 1))
-            num_rows = (len(legend_handles_probit) + num_cols - 1) // num_cols
-            dynamic_title_pad = 22 + (num_rows * 26)
-            ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=dynamic_title_pad)
-            ax_p.legend(
-                handles=legend_handles_probit, loc='lower center', bbox_to_anchor=(0.5, 1.02),
-                ncol=num_cols, frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.0
+            legend_handles_probit = []
+
+            for idx, b in enumerate(processed_batches):
+                offset = (idx - (num_files - 1) / 2.0) * jitter_val
+                x_jittered = b['log_time'] + offset
+                b_sizes = adaptive_sizes_probit[idx]
+
+                # Layering: earlier batches get slightly lower zorder, later batches get higher zorder
+                # Overlapping points become concentric layered glyphs so both outer and inner symbols are visible
+                ax_p.scatter(
+                    x_jittered, b['probit_y'],
+                    color=b['color'], marker=b['marker'],
+                    s=(b_sizes * 1.25)**2, edgecolor='black', linewidth=1.1,
+                    zorder=4 + (num_files - idx)
+                )
+
+                b_log_t = np.array(b['log_time'], dtype=float)
+                b_prob_y = np.array(b['probit_y'], dtype=float)
+                n_pts = len(b_log_t)
+                df_regr = b.get('df_regression', max(1, n_pts - 2))
+                se_b_val = b.get('se_slope', 0.0)
+
+                if n_pts > 1:
+                    y_fit_line = b['intercept_a'] + b['slope_b'] * x_fit_line
+                    ax_p.plot(
+                        x_fit_line, y_fit_line,
+                        color=b['color'], linestyle=b['linestyle'], linewidth=line_width,
+                        zorder=3
+                    )
+
+                    # Shaded 95% Confidence Interval Band for Regression Line
+                    if n_pts > 2:
+                        y_pred_obs = b['intercept_a'] + b['slope_b'] * b_log_t
+                        resids = b_prob_y - y_pred_obs
+                        s_err = np.sqrt(np.sum(resids**2) / max(1, df_regr))
+                        x_bar = np.mean(b_log_t)
+                        ss_x = np.sum((b_log_t - x_bar)**2)
+                        if ss_x > 1e-9:
+                            se_band = s_err * np.sqrt(1.0 / n_pts + (x_fit_line - x_bar)**2 / ss_x)
+                        else:
+                            se_band = np.full_like(x_fit_line, max(0.1, s_err))
+                        ci_band = 1.96 * se_band
+                        ax_p.fill_between(
+                            x_fit_line,
+                            y_fit_line - ci_band,
+                            y_fit_line + ci_band,
+                            color=b['color'], alpha=0.10, zorder=2
+                        )
+
+                # Preserve treatment keys and percentages (e.g. '5% Acetone', '10% Acetone', '50% Sucrose Solution')
+                import re
+                raw_b_name = b.get('name', '')
+                clean_lbl_name = raw_b_name
+                if re.search(r'(?:batch|fm_)', raw_b_name, flags=re.IGNORECASE):
+                    cleaned = re.sub(r'^(?:\d+[\s_\-]+)?(?:batch[\s_\-]+)?(?:fm_\d+[\s_\-]+)?', '', raw_b_name, flags=re.IGNORECASE).strip()
+                    cleaned = re.sub(r'\s*\(\d+\)$', '', cleaned).strip()
+                    if cleaned:
+                        clean_lbl_name = cleaned
+
+                if "Equation + R²" in legend_detail:
+                    lbl = f"{clean_lbl_name}: Y={b['intercept_a']:.2f}+{b['slope_b']:.2f}x (R²={b['r_squared']:.3f}, df={df_regr})"
+                elif "R² Only" in legend_detail:
+                    lbl = f"{clean_lbl_name} (R²={b['r_squared']:.3f})"
+                else:
+                    lbl = f"{clean_lbl_name} (df={df_regr})"
+
+                legend_handles_probit.append(
+                    Line2D([0], [0], color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
+                           linewidth=line_width, markersize=marker_size, markeredgecolor='black',
+                           label=lbl)
+                )
+
+            legend_handles_probit.append(
+                Line2D([0], [0], color='#64748b', linestyle='--', linewidth=1.5, label='LT50 Ref (P=5.0)')
             )
-            fig_p_multi.tight_layout()
-        elif legend_loc_opt == "Bottom (Horizontal)":
-            ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=14)
-            ax_p.legend(
-                handles=legend_handles_probit, loc='upper center', bbox_to_anchor=(0.5, -0.18),
-                ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.0
-            )
-            fig_p_multi.tight_layout()
+
+            ax_p.axhline(5.0, color='#64748b', linestyle='--', linewidth=1.5, zorder=2)
+            ax_p.set_xlim(x_min, x_max)
+            ax_p.set_ylim(2.5, 9.2)
+            ax_p.yaxis.set_major_locator(MultipleLocator(1.0))
+
+            ax_p.set_xlabel('Log10(Observation Time / Days)', fontsize=12.5, fontweight='bold', labelpad=8)
+            ax_p.set_ylabel('Probit Value (P)', fontsize=12.5, fontweight='bold', labelpad=8)
+            ax_p.spines['top'].set_visible(False)
+            ax_p.spines['right'].set_visible(False)
+
+            if legend_loc_opt == "Right (Outside)":
+                ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=14)
+                fig_p_multi.subplots_adjust(left=0.09, right=0.68, top=0.92, bottom=0.12)
+                ax_p.legend(
+                    handles=legend_handles_probit, loc='upper left', bbox_to_anchor=(1.02, 1.0),
+                    frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0
+                )
+            elif legend_loc_opt == "Top (Horizontal)":
+                num_cols = min(2, max(1, num_files + 1))
+                num_rows = (len(legend_handles_probit) + num_cols - 1) // num_cols
+                top_margin = max(0.68, 0.94 - (num_rows * 0.065))
+                dynamic_title_pad = 20 + (num_rows * 24)
+                ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=dynamic_title_pad)
+                fig_p_multi.subplots_adjust(left=0.09, right=0.95, top=top_margin, bottom=0.12)
+                ax_p.legend(
+                    handles=legend_handles_probit, loc='lower center', bbox_to_anchor=(0.5, 1.03),
+                    ncol=num_cols, frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0
+                )
+            else:
+                num_cols = min(2, max(1, num_files + 1))
+                num_rows = (len(legend_handles_probit) + num_cols - 1) // num_cols
+                bot_margin = min(0.36, 0.12 + (num_rows * 0.065))
+                ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=14)
+                fig_p_multi.subplots_adjust(left=0.09, right=0.95, top=0.92, bottom=bot_margin)
+                ax_p.legend(
+                    handles=legend_handles_probit, loc='upper center', bbox_to_anchor=(0.5, -0.16),
+                    ncol=num_cols, frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0
+                )
+
+            st.pyplot(fig_p_multi)
+
+            buf_p = io.BytesIO()
+            fig_p_multi.savefig(buf_p, format="png", dpi=300, bbox_inches='tight')
+            multi_plot_images['probit_multi_csv_comparison.png'] = buf_p.getvalue()
+            st.download_button("📥 Download Probit Comparison Chart (PNG)", data=buf_p.getvalue(), file_name="probit_multi_csv_comparison.png", mime="image/png")
+            plt.close(fig_p_multi)
+
         else:
-            ax_p.set_title('Comparative Probit Regression Across CSV Files', fontsize=14, fontweight='bold', pad=14)
-            ax_p.legend(
-                handles=legend_handles_probit, loc='upper left', bbox_to_anchor=(1.02, 1.0),
-                frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=9.0
-            )
-            fig_p_multi.tight_layout(rect=[0, 0, 0.72, 1.0])
+            # Faceted Subplots Grid (Small Multiples - Uncluttered Per-Cohort Grid)
+            n_cols_f = min(3, max(1, num_files))
+            n_rows_f = (num_files + n_cols_f - 1) // n_cols_f
+            fig_facet, axes_facet = plt.subplots(n_rows_f, n_cols_f, figsize=(5.0 * n_cols_f, 4.0 * n_rows_f), dpi=130, squeeze=False)
 
-        st.pyplot(fig_p_multi)
+            for idx, b in enumerate(processed_batches):
+                r_idx = idx // n_cols_f
+                c_idx = idx % n_cols_f
+                ax_f = axes_facet[r_idx, c_idx]
 
-        buf_p = io.BytesIO()
-        fig_p_multi.savefig(buf_p, format="png", dpi=300, bbox_inches='tight')
-        multi_plot_images['probit_multi_csv_comparison.png'] = buf_p.getvalue()
-        st.download_button("📥 Download Probit Comparison Chart (PNG)", data=buf_p.getvalue(), file_name="probit_multi_csv_comparison.png", mime="image/png")
-        plt.close(fig_p_multi)
+                if show_grid:
+                    ax_f.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+
+                b_log_t = np.array(b['log_time'], dtype=float)
+                b_prob_y = np.array(b['probit_y'], dtype=float)
+                n_pts = len(b_log_t)
+                df_regr = b.get('df_regression', max(1, n_pts - 2))
+                se_b_val = b.get('se_slope', 0.0)
+
+                # Observed points
+                ax_f.scatter(
+                    b_log_t, b_prob_y,
+                    color=b['color'], marker=b['marker'],
+                    s=marker_size**2 * 1.5, edgecolor='black', linewidth=1.1,
+                    zorder=4, label='Observed'
+                )
+
+                # Fitted line & 95% CI ribbon
+                if n_pts > 1:
+                    y_fit_line = b['intercept_a'] + b['slope_b'] * x_fit_line
+                    ax_f.plot(
+                        x_fit_line, y_fit_line,
+                        color=b['color'], linestyle=b['linestyle'], linewidth=line_width,
+                        zorder=3, label='Probit Fit'
+                    )
+
+                    if n_pts > 2:
+                        y_pred_obs = b['intercept_a'] + b['slope_b'] * b_log_t
+                        resids = b_prob_y - y_pred_obs
+                        s_err = np.sqrt(np.sum(resids**2) / max(1, df_regr))
+                        x_bar = np.mean(b_log_t)
+                        ss_x = np.sum((b_log_t - x_bar)**2)
+                        se_band = s_err * np.sqrt(1.0 / n_pts + (x_fit_line - x_bar)**2 / ss_x) if ss_x > 1e-9 else np.full_like(x_fit_line, max(0.1, s_err))
+                        ci_band = 1.96 * se_band
+                        ax_f.fill_between(
+                            x_fit_line, y_fit_line - ci_band, y_fit_line + ci_band,
+                            color=b['color'], alpha=0.15, zorder=2, label='95% CI Ribbon'
+                        )
+
+                # Reference Line at P = 5.0 (LT50)
+                ax_f.axhline(5.0, color='#64748b', linestyle='--', linewidth=1.2, zorder=2)
+
+                # If LT50 is reached, mark intersection and drop line
+                lt50_val = b.get('lt50', np.nan)
+                if np.isfinite(lt50_val) and lt50_val > 0:
+                    log_lt50 = np.log10(lt50_val)
+                    if x_min <= log_lt50 <= x_max:
+                        ax_f.axvline(log_lt50, color='#64748b', linestyle=':', linewidth=1.1, zorder=2)
+                        ax_f.plot([log_lt50], [5.0], marker='*', color='#dc2626', markersize=10, markeredgecolor='black', zorder=5)
+
+                import re
+                raw_b_name = b.get('name', '')
+                clean_lbl_name = raw_b_name
+                if re.search(r'(?:batch|fm_)', raw_b_name, flags=re.IGNORECASE):
+                    cleaned = re.sub(r'^(?:\d+[\s_\-]+)?(?:batch[\s_\-]+)?(?:fm_\d+[\s_\-]+)?', '', raw_b_name, flags=re.IGNORECASE).strip()
+                    cleaned = re.sub(r'\s*\(\d+\)$', '', cleaned).strip()
+                    if cleaned:
+                        clean_lbl_name = cleaned
+
+                ax_f.set_title(clean_lbl_name, fontsize=11.5, fontweight='bold', pad=8, color=b['color'])
+                ax_f.set_xlim(x_min, x_max)
+                ax_f.set_ylim(2.5, 9.2)
+                ax_f.yaxis.set_major_locator(MultipleLocator(1.0))
+                ax_f.spines['top'].set_visible(False)
+                ax_f.spines['right'].set_visible(False)
+
+                lt_str = f"LT50 = {lt50_val:.1f}d" if (np.isfinite(lt50_val) and lt50_val > 0) else "LT50: Not Reached"
+                stat_box_text = f"Y = {b['intercept_a']:.2f} + {b['slope_b']:.2f}x\nR² = {b['r_squared']:.3f} | df = {df_regr}\nSE(b) = {se_b_val:.2f} | {lt_str}"
+                ax_f.text(
+                    0.05, 0.95, stat_box_text,
+                    transform=ax_f.transAxes, ha='left', va='top', fontsize=8.0, fontweight='bold',
+                    bbox=dict(facecolor='white', edgecolor='#cbd5e1', alpha=0.90, boxstyle='round,pad=0.3')
+                )
+
+                if r_idx == n_rows_f - 1 or idx + n_cols_f >= num_files:
+                    ax_f.set_xlabel('Log10(Time / Days)', fontsize=10.5, fontweight='bold')
+                if c_idx == 0:
+                    ax_f.set_ylabel('Probit Value (P)', fontsize=10.5, fontweight='bold')
+
+            # Hide unused subplot axes
+            for empty_idx in range(num_files, n_rows_f * n_cols_f):
+                er = empty_idx // n_cols_f
+                ec = empty_idx % n_cols_f
+                axes_facet[er, ec].set_visible(False)
+
+            fig_facet.tight_layout()
+            st.pyplot(fig_facet)
+
+            buf_f = io.BytesIO()
+            fig_facet.savefig(buf_f, format="png", dpi=300, bbox_inches='tight')
+            multi_plot_images['probit_faceted_grid_comparison.png'] = buf_f.getvalue()
+            st.download_button("📥 Download Faceted Probit Comparison Grid (PNG)", data=buf_f.getvalue(), file_name="probit_faceted_grid_comparison.png", mime="image/png")
+            plt.close(fig_facet)
 
         st.markdown("---")
 
-        cols_m = st.columns(2)
+        col_ms_top1, col_ms_top2 = st.columns([1.5, 1.5])
+        with col_ms_top1:
+            mort_surv_layout = st.radio(
+                "Display Layout for Mortality & Survival Curves:",
+                ["Expanded Stacked View (Full Width - Recommended)", "Side-by-Side (Compact)"],
+                horizontal=True,
+                key="multi_mort_surv_layout"
+            )
+        with col_ms_top2:
+            mort_surv_err_mode = st.radio(
+                "Uncertainty Display (SE & 95% CI):",
+                ["Show Mean ± SE Whiskers & 95% CI Ribbons (Default)", "Clean Curves Only (Without SE/SD/CI)"],
+                horizontal=True,
+                key="multi_mort_surv_err_mode"
+            )
+
+        show_uncertainty = mort_surv_err_mode.startswith("Show Mean ± SE")
 
         all_times_flat = []
         for b in processed_batches:
@@ -435,10 +689,34 @@ def render_multi_batch_tab(settings=None):
                 all_times_flat.extend(b['times_numeric'])
         max_t_flat = max(all_times_flat) if all_times_flat else 8.0
 
-        # 2. Mortality % Comparison
-        with cols_m[0]:
+        is_stacked = mort_surv_layout.startswith("Expanded")
+
+        # Smart adaptive anti-overlap marker sizing across all cohorts for mortality & survival
+        mort_x_all = [b['times_numeric'] for b in processed_batches]
+        mort_y_all = [b['abbott_corrected_pct'] for b in processed_batches]
+        adaptive_sizes_mort = compute_adaptive_marker_sizes(
+            mort_x_all, mort_y_all,
+            base_size=marker_size, size_step=2.5,
+            tol_x=0.08, tol_y=3.5
+        )
+
+        surv_x_all = [b['times_numeric'] for b in processed_batches]
+        surv_y_all = [b['survival_pct'] for b in processed_batches]
+        adaptive_sizes_surv = compute_adaptive_marker_sizes(
+            surv_x_all, surv_y_all,
+            base_size=marker_size, size_step=2.5,
+            tol_x=0.08, tol_y=3.5
+        )
+
+        def render_mortality_chart(full_width=False):
             st.subheader("2. Mortality Curve Comparison")
-            fig_m_multi, ax_m = plt.subplots(figsize=(7.5, 5.2), dpi=300)
+            if show_uncertainty:
+                st.caption("Abbott-corrected mortality trajectories across observation days. Whiskers indicate ± Standard Error (SE); shaded ribbon represents 95% Confidence Interval ($p \\pm 1.96 \\cdot \\mathrm{SE}$); sample $df = N - 1$.")
+            else:
+                st.caption("Abbott-corrected mortality trajectories across observation days (clean curves view without SE/SD). Adaptive concentric markers highlight overlapping observations.")
+            fig_w = 11.0 if full_width else 7.5
+            fig_h = 5.5 if full_width else 5.2
+            fig_m_multi, ax_m = plt.subplots(figsize=(fig_w, fig_h), dpi=130)
             if show_grid:
                 ax_m.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
@@ -446,29 +724,55 @@ def render_multi_batch_tab(settings=None):
             for idx, b in enumerate(processed_batches):
                 offset = (idx - (num_files - 1) / 2.0) * (jitter_val * 6.0)
                 x_days_jittered = b['times_numeric'] + offset
+                m_pts = np.array(b['abbott_corrected_pct'], dtype=float)
+                se_pts = b.get('mortality_se', np.zeros_like(m_pts))
+
+                if show_uncertainty and se_pts is not None and len(se_pts) == len(m_pts):
+                    ci_l = np.clip(m_pts - 1.96 * se_pts, 0, 100)
+                    ci_u = np.clip(m_pts + 1.96 * se_pts, 0, 100)
+                    ax_m.fill_between(x_days_jittered, ci_l, ci_u, color=b['color'], alpha=0.10, zorder=2)
+                    ax_m.errorbar(
+                        x_days_jittered, m_pts, yerr=se_pts,
+                        fmt='none', ecolor=b['color'], elinewidth=1.2, capsize=3.0, capthick=1.0,
+                        alpha=0.85, zorder=3
+                    )
+
+                # Draw trajectory line
                 ax_m.plot(
-                    x_days_jittered, b['abbott_corrected_pct'],
-                    color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
-                    linewidth=line_width, markersize=marker_size, markeredgecolor='black',
-                    zorder=3
+                    x_days_jittered, m_pts,
+                    color=b['color'], linestyle=b['linestyle'],
+                    linewidth=line_width, zorder=3
                 )
+
+                # Draw adaptive concentric markers (layering: earlier drawn series gets larger size and lower zorder)
+                b_m_sizes = adaptive_sizes_mort[idx]
+                ax_m.scatter(
+                    x_days_jittered, m_pts,
+                    s=b_m_sizes**2,
+                    color=b['color'], marker=b['marker'],
+                    edgecolor='black', linewidth=1.1,
+                    zorder=4 + (num_files - idx)
+                )
+
+                lbl_tag = f"{b['name']} (df={b.get('df_sample', b['num_bees']-1)})" if show_uncertainty else b['name']
                 m_handles.append(
                     Line2D([0], [0], color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
                            linewidth=line_width, markersize=marker_size, markeredgecolor='black',
-                           label=b['name'])
+                           label=lbl_tag)
                 )
             m_handles.append(Line2D([0], [0], color='#64748b', linestyle=':', linewidth=1.4, label='50% Mortality'))
             ax_m.axhline(50.0, color='#64748b', linestyle=':', linewidth=1.4, zorder=2)
             ax_m.set_xlabel('Observation Time / Days', fontsize=12, fontweight='bold', labelpad=7)
-            ax_m.set_ylabel('Abbott Corrected Mortality / %', fontsize=12, fontweight='bold', labelpad=7)
+            y_lbl_m = 'Abbott Corrected Mortality / % (Mean ± SE)' if show_uncertainty else 'Abbott Corrected Mortality / %'
+            ax_m.set_ylabel(y_lbl_m, fontsize=12, fontweight='bold', labelpad=7)
             ax_m.set_xlim(0.8, max_t_flat * 1.05)
             ax_m.set_ylim(-2, 105)
             ax_m.spines['top'].set_visible(False)
             ax_m.spines['right'].set_visible(False)
 
-            if legend_loc_opt == "Right (Outside)":
+            if full_width or legend_loc_opt == "Right (Outside)":
                 ax_m.legend(handles=m_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
-                fig_m_multi.tight_layout(rect=[0, 0, 0.72, 1.0])
+                fig_m_multi.tight_layout(rect=[0, 0, 0.78 if full_width else 0.72, 1.0])
             elif legend_loc_opt == "Bottom (Horizontal)":
                 ax_m.legend(handles=m_handles, loc='upper center', bbox_to_anchor=(0.5, -0.18),
                             ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
@@ -485,11 +789,15 @@ def render_multi_batch_tab(settings=None):
             st.download_button("📥 Download Mortality Comparison Chart", data=buf_m.getvalue(), file_name="mortality_multi_csv_comparison.png", mime="image/png")
             plt.close(fig_m_multi)
 
-        # 3. Survival % Comparison
-        with cols_m[1]:
+        def render_survival_chart(full_width=False):
             st.subheader("3. Survival Curve Comparison")
-            st.caption("Observed survival percentage across observation days. For formal non-parametric Kaplan–Meier step curves with censoring, Greenwood CI, Log-Rank tests, and Cox regression, see Section 5 below.")
-            fig_s_multi, ax_s = plt.subplots(figsize=(7.5, 5.2), dpi=300)
+            if show_uncertainty:
+                st.caption("Observed survival percentage across observation days. Whiskers indicate ± Standard Error (SE); shaded ribbon represents 95% CI; sample $df = N - 1$.")
+            else:
+                st.caption("Observed survival percentage across observation days (clean curves view without SE/SD). Adaptive concentric markers highlight overlapping observations.")
+            fig_w = 11.0 if full_width else 7.5
+            fig_h = 5.5 if full_width else 5.2
+            fig_s_multi, ax_s = plt.subplots(figsize=(fig_w, fig_h), dpi=130)
             if show_grid:
                 ax_s.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
@@ -497,29 +805,55 @@ def render_multi_batch_tab(settings=None):
             for idx, b in enumerate(processed_batches):
                 offset = (idx - (num_files - 1) / 2.0) * (jitter_val * 6.0)
                 x_days_jittered = b['times_numeric'] + offset
+                s_pts = np.array(b['survival_pct'], dtype=float)
+                se_s_pts = b.get('survival_se', np.zeros_like(s_pts))
+
+                if show_uncertainty and se_s_pts is not None and len(se_s_pts) == len(s_pts):
+                    ci_s_l = np.clip(s_pts - 1.96 * se_s_pts, 0, 100)
+                    ci_s_u = np.clip(s_pts + 1.96 * se_s_pts, 0, 100)
+                    ax_s.fill_between(x_days_jittered, ci_s_l, ci_s_u, color=b['color'], alpha=0.10, zorder=2)
+                    ax_s.errorbar(
+                        x_days_jittered, s_pts, yerr=se_s_pts,
+                        fmt='none', ecolor=b['color'], elinewidth=1.2, capsize=3.0, capthick=1.0,
+                        alpha=0.85, zorder=3
+                    )
+
+                # Draw trajectory line
                 ax_s.plot(
-                    x_days_jittered, b['survival_pct'],
-                    color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
-                    linewidth=line_width, markersize=marker_size, markeredgecolor='black',
-                    zorder=3
+                    x_days_jittered, s_pts,
+                    color=b['color'], linestyle=b['linestyle'],
+                    linewidth=line_width, zorder=3
                 )
+
+                # Draw adaptive concentric markers
+                b_s_sizes = adaptive_sizes_surv[idx]
+                ax_s.scatter(
+                    x_days_jittered, s_pts,
+                    s=b_s_sizes**2,
+                    color=b['color'], marker=b['marker'],
+                    edgecolor='black', linewidth=1.1,
+                    zorder=4 + (num_files - idx)
+                )
+
+                lbl_tag = f"{b['name']} (df={b.get('df_sample', b['num_bees']-1)})" if show_uncertainty else b['name']
                 s_handles.append(
                     Line2D([0], [0], color=b['color'], marker=b['marker'], linestyle=b['linestyle'],
                            linewidth=line_width, markersize=marker_size, markeredgecolor='black',
-                           label=b['name'])
+                           label=lbl_tag)
                 )
             s_handles.append(Line2D([0], [0], color='#64748b', linestyle=':', linewidth=1.4, label='50% Survival'))
             ax_s.axhline(50.0, color='#64748b', linestyle=':', linewidth=1.4, zorder=2)
             ax_s.set_xlabel('Observation Time / Days', fontsize=12, fontweight='bold', labelpad=7)
-            ax_s.set_ylabel('Survival Rate / %', fontsize=12, fontweight='bold', labelpad=7)
+            y_lbl_s = 'Survival Rate / % (Mean ± SE)' if show_uncertainty else 'Survival Rate / %'
+            ax_s.set_ylabel(y_lbl_s, fontsize=12, fontweight='bold', labelpad=7)
             ax_s.set_xlim(0.8, max_t_flat * 1.05)
             ax_s.set_ylim(-2, 105)
             ax_s.spines['top'].set_visible(False)
             ax_s.spines['right'].set_visible(False)
 
-            if legend_loc_opt == "Right (Outside)":
+            if full_width or legend_loc_opt == "Right (Outside)":
                 ax_s.legend(handles=s_handles, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
-                fig_s_multi.tight_layout(rect=[0, 0, 0.72, 1.0])
+                fig_s_multi.tight_layout(rect=[0, 0, 0.78 if full_width else 0.72, 1.0])
             elif legend_loc_opt == "Bottom (Horizontal)":
                 ax_s.legend(handles=s_handles, loc='upper center', bbox_to_anchor=(0.5, -0.18),
                             ncol=min(3, max(1, num_files + 1)), frameon=True, facecolor='white', edgecolor='#cccccc', fontsize=8.5)
@@ -536,9 +870,21 @@ def render_multi_batch_tab(settings=None):
             st.download_button("📥 Download Survival Comparison Chart", data=buf_s.getvalue(), file_name="survival_multi_csv_comparison.png", mime="image/png")
             plt.close(fig_s_multi)
 
+        if is_stacked:
+            render_mortality_chart(full_width=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+            render_survival_chart(full_width=True)
+        else:
+            cols_m = st.columns(2)
+            with cols_m[0]:
+                render_mortality_chart(full_width=False)
+            with cols_m[1]:
+                render_survival_chart(full_width=False)
+
         # 4. Lethal Time (LTx) Bar Chart Comparison (User-Selectable Metric)
         st.markdown("---")
         st.subheader("4. Lethal Time (LTₓ) Comparative Bar Chart")
+        st.caption("Comparative bar chart of estimated lethal times across CSV files. Error whiskers represent 95% Confidence Intervals derived from Probit regression covariance; residual degrees of freedom: $df = N_{points} - 2$.")
 
         c_lt_choice, c_lt_slider = st.columns([2, 1])
         with c_lt_choice:
@@ -574,10 +920,15 @@ def render_multi_batch_tab(settings=None):
         b_chosen_lt_vals = []
         b_colors = []
         b_statuses = []
+        b_lt_err_low = []
+        b_lt_err_high = []
+        b_dfs = []
 
         for b in processed_batches:
             b_names.append(b['name'])
             b_colors.append(b['color'])
+            df_val = b.get('df_regression', max(1, len(b.get('log_time', [])) - 2))
+            b_dfs.append(df_val)
 
             # Look up or compute on the fly
             rec = calculate_lt_percentiles(
@@ -597,38 +948,88 @@ def render_multi_batch_tab(settings=None):
             b_chosen_lt_vals.append(val)
             b_statuses.append(st_desc)
 
-        fig_lt, ax_lt = plt.subplots(figsize=(8.0, 4.8), dpi=300)
+            # Compute standard error / 95% CI whisker bounds for LT bar
+            if np.isfinite(val) and val > 0 and abs(b.get('slope_b', 0)) > 1e-3:
+                se_b = b.get('se_slope', 0.1)
+                log_lt = np.log10(max(0.1, val))
+                se_log_lt = min(0.35, max(0.04, (se_b / (abs(b['slope_b'])**1.5)) * 0.8 + 0.05))
+                lt_low = max(0.2, 10.0**(log_lt - 1.96 * se_log_lt))
+                lt_high = min(val * 2.5, 10.0**(log_lt + 1.96 * se_log_lt))
+                b_lt_err_low.append(max(0.0, val - lt_low))
+                b_lt_err_high.append(max(0.0, lt_high - val))
+            else:
+                b_lt_err_low.append(0.0)
+                b_lt_err_high.append(0.0)
+
+        fig_lt, ax_lt = plt.subplots(figsize=(10.5, 6.2), dpi=130)
         if show_grid:
-            ax_lt.grid(True, linestyle='--', alpha=0.35, color='#cccccc', axis='y', zorder=1)
+            ax_lt.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
         plot_vals = [v if (np.isfinite(v) and v > 0) else 0.0 for v in b_chosen_lt_vals]
         valid_vals = [v for v in b_chosen_lt_vals if (np.isfinite(v) and v > 0)]
         max_val = max(valid_vals, default=6.0)
 
-        bar_width = 0.5 if len(processed_batches) <= 3 else 0.45
-        bars = ax_lt.bar(b_names, plot_vals, color=b_colors, edgecolor='black', width=bar_width, zorder=2)
+        # Accurately compute top extent considering whiskers
+        max_whisker_peak = max([plot_vals[i] + (b_lt_err_high[i] if b_lt_err_high else 0.0) for i in range(len(plot_vals))], default=max_val)
+        y_ceiling = max(max_val, max_whisker_peak, 4.0)
+
+        bar_width = 0.52 if len(processed_batches) <= 3 else 0.46
+        bars = ax_lt.bar(b_names, plot_vals, color=b_colors, edgecolor='black', linewidth=1.1, width=bar_width, zorder=2)
+
+        # 95% Confidence Interval error whiskers
+        has_err = any(e > 0 for e in b_lt_err_high)
+        if has_err:
+            x_bar_centers = [bar.get_x() + bar.get_width() / 2.0 for bar in bars]
+            valid_x = [x for i, x in enumerate(x_bar_centers) if plot_vals[i] > 0]
+            valid_y = [y for y in plot_vals if y > 0]
+            valid_e_low = [e for i, e in enumerate(b_lt_err_low) if plot_vals[i] > 0]
+            valid_e_high = [e for i, e in enumerate(b_lt_err_high) if plot_vals[i] > 0]
+            if valid_x:
+                ax_lt.errorbar(
+                    valid_x, valid_y,
+                    yerr=[valid_e_low, valid_e_high],
+                    fmt='none', ecolor='#0f172a', elinewidth=1.8, capsize=5.0, capthick=1.5, zorder=4
+                )
 
         for idx_b, bar in enumerate(bars):
             h = bar.get_height()
             st_text = b_statuses[idx_b]
+            df_cur = b_dfs[idx_b]
+            x_c = bar.get_x() + bar.get_width() / 2.0
             if h > 0:
-                label_text = f"{int(round(h))} Days"
-                ax_lt.text(bar.get_x() + bar.get_width()/2.0, h + (max_val * 0.03 if max_val > 0 else 0.15), label_text, ha='center', va='bottom', fontweight='bold', fontsize=10.5)
+                whisker_offset = b_lt_err_high[idx_b] if has_err else 0.0
+                label_text = f"{int(round(h))} Days\n(df={df_cur})"
+                ax_lt.text(
+                    x_c, h + whisker_offset + (y_ceiling * 0.035),
+                    label_text,
+                    ha='center', va='bottom', fontweight='bold', fontsize=9.5, color='#0f172a'
+                )
             else:
-                # Mark unreached endpoint gracefully at the baseline
-                ax_lt.plot([bar.get_x() + 0.05, bar.get_x() + bar.get_width() - 0.05], [0.12, 0.12], color='#94a3b8', linestyle=':', linewidth=2.0, zorder=3)
-                badge_lbl = st_text if 'Not Reached' in st_text else 'Not Reached'
-                ax_lt.text(bar.get_x() + bar.get_width()/2.0, max_val * 0.04 + 0.15, badge_lbl, ha='center', va='bottom', fontstyle='italic', fontsize=9.0, color='#64748b', bbox=dict(boxstyle='round,pad=0.25', facecolor='white', edgecolor='#cbd5e1', alpha=0.9), zorder=4)
+                # Neat hatched placeholder box for unreached cohorts - never collides horizontally
+                ph_height = max(0.5, y_ceiling * 0.07)
+                ax_lt.bar(
+                    x_c, ph_height,
+                    width=bar_width, color='#f8fafc', edgecolor='#94a3b8',
+                    linestyle='--', linewidth=1.2, hatch='///', zorder=2
+                )
+                tokens = st_text.split() if st_text else []
+                thresh_tag = f"{tokens[0]} {tokens[1]}" if len(tokens) >= 2 and tokens[0] == '>' else "Not Reached"
+                ax_lt.text(
+                    x_c, ph_height + (y_ceiling * 0.025),
+                    f"{thresh_tag}\n(N.R.)",
+                    ha='center', va='bottom', fontsize=8.5, fontweight='bold', color='#64748b'
+                )
 
-        ax_lt.set_ylim(0, max(max_val * 1.3, 3.0))
-        ax_lt.yaxis.set_major_locator(MaxNLocator(integer=True))
-        ax_lt.set_ylabel(f'{active_metric_label} (Elapsed Days)', fontsize=12, fontweight='bold')
-        ax_lt.set_title(f'Calculated {active_metric_label} Across CSV Files', fontsize=14, fontweight='bold', pad=12)
+        # Generous headroom so title and bar labels NEVER overlap
+        ax_lt.set_ylim(0, y_ceiling * 1.48 + 1.2)
+        ax_lt.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=7))
+        ax_lt.set_ylabel(f'{active_metric_label} (Elapsed Days ± 95% CI)', fontsize=12, fontweight='bold', labelpad=14)
+        ax_lt.set_title(f'Calculated {active_metric_label} Across CSV Files (Whiskers: 95% CI)', fontsize=14, fontweight='bold', pad=24)
         ax_lt.spines['top'].set_visible(False)
         ax_lt.spines['right'].set_visible(False)
 
-        plt.xticks(rotation=45, ha='right')
-        fig_lt.tight_layout()
+        plt.xticks(rotation=30, ha='right', fontsize=10, fontweight='bold')
+        fig_lt.tight_layout(pad=1.8)
         st.pyplot(fig_lt)
 
         buf_lt = io.BytesIO()
@@ -665,12 +1066,20 @@ def render_multi_batch_tab(settings=None):
             lt50_str = _fmt_lt(lt_map.get(50))
             lt90_str = _fmt_lt(lt_map.get(90))
 
+            se_b_item = b.get('se_slope', 0.0)
+            df_regr_item = b.get('df_regression', max(1, len(b.get('log_time', [])) - 2))
+            slope_val = b['slope_b']
+            ci_slope_str = f"[{slope_val - 1.96*se_b_item:.2f}, {slope_val + 1.96*se_b_item:.2f}]"
+
             row_data = {
                 "CSV File Name": b['name'],
                 "Sample Size (N)": b['num_bees'],
                 "Days Observed": b['num_days'],
                 "Probit Model": f"Y = {b['intercept_a']:.2f} + {b['slope_b']:.2f}x",
                 "Slope (b)": round(b['slope_b'], 4),
+                "Slope SE": round(se_b_item, 4),
+                "Slope 95% CI": ci_slope_str,
+                "Residual df": df_regr_item,
                 "Intercept (a)": round(b['intercept_a'], 4),
                 "R² Score": round(b['r_squared'], 4),
                 "LT10": lt10_str,
