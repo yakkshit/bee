@@ -1106,12 +1106,17 @@ def render_multi_batch_tab(settings=None):
             st.download_button("📊 Download Comparative Summary Table (CSV)", data=csv_str, file_name="multi_csv_probit_summary.csv", mime="text/csv", key="dl_multi_probit_summary_csv")
 
         with c_zip_top:
-            if multi_plot_images:
-                zip_multi_buf = io.BytesIO()
-                with zipfile.ZipFile(zip_multi_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for fn, data in multi_plot_images.items():
-                        zf.writestr(fn, data)
-                st.download_button("📦 Download Generated Plots (ZIP)", data=zip_multi_buf.getvalue(), file_name="multi_csv_plots.zip", mime="application/zip", key="dl_multi_zip_top")
+            from modules.global_exporter import get_complete_master_zip
+            master_zip_bytes = get_complete_master_zip(settings=settings, uploaded_file_dict=uploaded_dict, multi_images=multi_plot_images)
+            if master_zip_bytes:
+                st.download_button(
+                    "📦 Download Master Bundle (Multi + All Single Plots ZIP)",
+                    data=master_zip_bytes,
+                    file_name="complete_bee_analytics_master_bundle.zip",
+                    mime="application/zip",
+                    key="dl_multi_master_zip_top",
+                    help="Downloads a comprehensive master archive containing all multi-cohort comparison plots AND all single-file plots for every uploaded dataset."
+                )
 
         # 5. Dedicated Multi-Cohort Sucrose Consumption & Feeding Kinetics Comparative Analysis
         render_multi_consumption_analysis(processed_batches, settings=settings, multi_plot_images=multi_plot_images)
@@ -1178,14 +1183,31 @@ def render_multi_batch_tab(settings=None):
         if multi_plot_images:
             st.session_state['multi_plot_images'] = multi_plot_images
             st.markdown("---")
-            zip_multi_buf_bottom = io.BytesIO()
-            with zipfile.ZipFile(zip_multi_buf_bottom, "w", zipfile.ZIP_DEFLATED) as zf:
-                for fn, data in multi_plot_images.items():
-                    zf.writestr(fn, data)
-            st.download_button(
-                "📦 Download All Multi-CSV Plots & Figures (ZIP Archive)",
-                data=zip_multi_buf_bottom.getvalue(),
-                file_name="all_multi_cohort_plots.zip",
-                mime="application/zip",
-                key="dl_multi_zip_bottom"
-            )
+            from modules.global_exporter import get_complete_master_zip
+            master_zip_bytes = get_complete_master_zip(settings=settings, uploaded_file_dict=uploaded_dict, multi_images=multi_plot_images)
+
+            c_bot_m, c_bot_s = st.columns(2)
+            with c_bot_m:
+                if master_zip_bytes:
+                    st.download_button(
+                        "🌟 Download Complete Master Bundle (Multi + All Single Plots ZIP)",
+                        data=master_zip_bytes,
+                        file_name="complete_bee_analytics_master_bundle.zip",
+                        mime="application/zip",
+                        key="dl_multi_master_zip_bottom",
+                        use_container_width=True,
+                        help="Downloads a comprehensive master archive containing all multi-cohort comparison plots AND all single-file plots for every uploaded dataset."
+                    )
+            with c_bot_s:
+                zip_multi_buf_bottom = io.BytesIO()
+                with zipfile.ZipFile(zip_multi_buf_bottom, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for fn, data in multi_plot_images.items():
+                        zf.writestr(fn, data)
+                st.download_button(
+                    "📊 Download Multi-Cohort Comparison Plots Only (ZIP)",
+                    data=zip_multi_buf_bottom.getvalue(),
+                    file_name="all_multi_cohort_plots.zip",
+                    mime="application/zip",
+                    key="dl_multi_zip_bottom",
+                    use_container_width=True
+                )

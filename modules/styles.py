@@ -339,14 +339,7 @@ def render_sidebar_controls():
 
     plt.rcParams['font.size'] = font_size
 
-    # Render persistent global download center in the sidebar
-    try:
-        from modules.global_exporter import render_sidebar_global_download
-        render_sidebar_global_download()
-    except Exception:
-        pass
-
-    return {
+    settings_dict = {
         'primary_color': primary_color,
         'secondary_color': secondary_color,
         'line_width': line_width,
@@ -358,6 +351,16 @@ def render_sidebar_controls():
         'hm_behavior_color': hm_behavior_color,
         'hm_dead_color': hm_dead_color
     }
+    st.session_state['studio_settings'] = settings_dict
+
+    # Render persistent global download center in the sidebar
+    try:
+        from modules.global_exporter import render_sidebar_global_download
+        render_sidebar_global_download(settings=settings_dict)
+    except Exception:
+        pass
+
+    return settings_dict
 
 
 def render_hero_banner():
