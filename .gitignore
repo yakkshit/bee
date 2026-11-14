@@ -81,3 +81,7 @@ dist/
 .devcontainer/
 
 AGENTS.md
+# context-gen-cli security & secrets
+.context-gen-key
+mcp.md
+context/

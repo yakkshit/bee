@@ -1138,10 +1138,11 @@ def render_multi_batch_tab(settings=None):
         if len(all_cohort_bees) >= 1:
             multi_survival_df = pd.concat(all_cohort_bees, ignore_index=True)
 
-            subtab_multi_km, subtab_multi_lr, subtab_multi_cox = st.tabs([
+            subtab_multi_km, subtab_multi_lr, subtab_multi_cox, subtab_multi_mt = st.tabs([
                 "📉 1. Kaplan–Meier Survival Curves Plot",
                 "📊 2. Log-Rank (Mantel-Cox) Test & Observed vs. Expected Plot",
-                "🌲 3. Cox Proportional Hazards Regression & Forest Plot"
+                "🌲 3. Cox Proportional Hazards Regression & Forest Plot",
+                "🔬 4. Multi-Testing & FDR Corrections (Bonferroni & Benjamini-Hochberg)"
             ])
 
             with subtab_multi_km:
@@ -1176,6 +1177,40 @@ def render_multi_batch_tab(settings=None):
                         render_cox_math_card()
                     with card_tab_mc:
                         render_methodology_comparison_card()
+
+            with subtab_multi_mt:
+                from itertools import combinations
+                from lifelines.statistics import logrank_test
+                from modules.core.multi_testing import render_multiple_testing_studio
+
+                mt_groups = sorted(multi_survival_df['cohort'].unique())
+                mt_pairs = list(combinations(mt_groups, 2))
+                mt_p_dict = {}
+                T_all = multi_survival_df['duration'].values
+                E_all = multi_survival_df['event'].values
+                G_all = multi_survival_df['cohort'].values
+
+                for g1, g2 in mt_pairs:
+                    m1 = (G_all == g1)
+                    m2 = (G_all == g2)
+                    e1 = E_all[m1]
+                    e2 = E_all[m2]
+                    comp_lbl = f"{g1} vs. {g2}"
+                    if np.sum(e1) == 0 and np.sum(e2) == 0:
+                        p_raw = 1.0
+                    else:
+                        try:
+                            res_p = logrank_test(T_all[m1], T_all[m2], event_observed_A=e1, event_observed_B=e2)
+                            p_raw = float(res_p.p_value)
+                        except Exception:
+                            p_raw = 1.0
+                    mt_p_dict[comp_lbl] = p_raw
+
+                render_multiple_testing_studio(
+                    mt_p_dict,
+                    key_suffix="multi_tab_dedicated_suite",
+                    image_collector=lambda k, v: multi_plot_images.update({k: v})
+                )
         else:
             st.info("No cohort survival data available to perform Log-Rank and Cox Regression.")
 

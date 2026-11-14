@@ -479,14 +479,18 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
     daily_all_cons = []
     daily_mean_cons = []
     daily_sem_cons = []
+    daily_sd_cons = []
     daily_alive_mean_cons = []
     daily_alive_sem_cons = []
+    daily_alive_sd_cons = []
 
     daily_all_tcons = []
     daily_mean_tcons = []
     daily_sem_tcons = []
+    daily_sd_tcons = []
     daily_alive_mean_tcons = []
     daily_alive_sem_tcons = []
+    daily_alive_sd_tcons = []
 
     for d_idx in range(num_days):
         # Normal Sucrose Consumption
@@ -494,45 +498,64 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
         daily_all_cons.append(day_vals)
         if day_vals:
             m_val = float(np.mean(day_vals))
-            sem_val = float(np.std(day_vals) / np.sqrt(len(day_vals))) if len(day_vals) > 1 else 0.0
+            sd_val = float(np.std(day_vals, ddof=1)) if len(day_vals) > 1 else float(np.std(day_vals))
+            sem_val = float(sd_val / np.sqrt(len(day_vals))) if len(day_vals) > 1 else 0.0
         else:
-            m_val, sem_val = 0.0, 0.0
+            m_val, sem_val, sd_val = 0.0, 0.0, 0.0
         daily_mean_cons.append(m_val)
         daily_sem_cons.append(sem_val)
+        daily_sd_cons.append(sd_val)
 
         alive_indices = [b_idx for b_idx in range(len(cons_matrix)) if get_latest_state(states_matrix[b_idx], d_idx) != 'D'] if cons_matrix else []
         if alive_indices:
             alive_day_vals = [cons_matrix[b_idx][d_idx] for b_idx in alive_indices]
             al_m = float(np.mean(alive_day_vals))
-            al_sem = float(np.std(alive_day_vals) / np.sqrt(len(alive_day_vals))) if len(alive_day_vals) > 1 else 0.0
+            al_sd = float(np.std(alive_day_vals, ddof=1)) if len(alive_day_vals) > 1 else float(np.std(alive_day_vals))
+            al_sem = float(al_sd / np.sqrt(len(alive_day_vals))) if len(alive_day_vals) > 1 else 0.0
         else:
-            al_m, al_sem = 0.0, 0.0
+            al_m, al_sem, al_sd = 0.0, 0.0, 0.0
         daily_alive_mean_cons.append(al_m)
         daily_alive_sem_cons.append(al_sem)
+        daily_alive_sd_cons.append(al_sd)
 
         # Treatment Solution Consumption (TCons)
         tday_vals = [tcons_matrix[b_idx][d_idx] for b_idx in range(len(tcons_matrix))] if tcons_matrix else []
         daily_all_tcons.append(tday_vals)
         if tday_vals:
             tm_val = float(np.mean(tday_vals))
-            tsem_val = float(np.std(tday_vals) / np.sqrt(len(tday_vals))) if len(tday_vals) > 1 else 0.0
+            tsd_val = float(np.std(tday_vals, ddof=1)) if len(tday_vals) > 1 else float(np.std(tday_vals))
+            tsem_val = float(tsd_val / np.sqrt(len(tday_vals))) if len(tday_vals) > 1 else 0.0
         else:
-            tm_val, tsem_val = 0.0, 0.0
+            tm_val, tsem_val, tsd_val = 0.0, 0.0, 0.0
         daily_mean_tcons.append(tm_val)
         daily_sem_tcons.append(tsem_val)
+        daily_sd_tcons.append(tsd_val)
 
         if alive_indices and tcons_matrix:
             alive_tday_vals = [tcons_matrix[b_idx][d_idx] for b_idx in alive_indices]
             tal_m = float(np.mean(alive_tday_vals))
-            tal_sem = float(np.std(alive_tday_vals) / np.sqrt(len(alive_tday_vals))) if len(alive_tday_vals) > 1 else 0.0
+            tal_sd = float(np.std(alive_tday_vals, ddof=1)) if len(alive_tday_vals) > 1 else float(np.std(alive_tday_vals))
+            tal_sem = float(tal_sd / np.sqrt(len(alive_tday_vals))) if len(alive_tday_vals) > 1 else 0.0
         else:
-            tal_m, tal_sem = 0.0, 0.0
+            tal_m, tal_sem, tal_sd = 0.0, 0.0, 0.0
         daily_alive_mean_tcons.append(tal_m)
         daily_alive_sem_tcons.append(tal_sem)
+        daily_alive_sd_tcons.append(tal_sd)
 
     daily_mean_cons = np.array(daily_mean_cons)
     daily_sem_cons = np.array(daily_sem_cons)
+    daily_sd_cons = np.array(daily_sd_cons)
     daily_alive_mean_cons = np.array(daily_alive_mean_cons)
+    daily_alive_sem_cons = np.array(daily_alive_sem_cons)
+    daily_alive_sd_cons = np.array(daily_alive_sd_cons)
+    cumulative_mean_cons = np.cumsum(daily_mean_cons) if len(daily_mean_cons) > 0 else np.array([])
+
+    daily_mean_tcons = np.array(daily_mean_tcons)
+    daily_sem_tcons = np.array(daily_sem_tcons)
+    daily_sd_tcons = np.array(daily_sd_tcons)
+    daily_alive_mean_tcons = np.array(daily_alive_mean_tcons)
+    daily_alive_sem_tcons = np.array(daily_alive_sem_tcons)
+    daily_alive_sd_tcons = np.array(daily_alive_sd_tcons)
     daily_alive_sem_cons = np.array(daily_alive_sem_cons)
     cumulative_mean_cons = np.cumsum(daily_mean_cons) if len(daily_mean_cons) > 0 else np.array([])
 
@@ -596,8 +619,10 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
         'daily_all_cons': daily_all_cons,
         'daily_mean_cons': daily_mean_cons,
         'daily_sem_cons': daily_sem_cons,
+        'daily_sd_cons': daily_sd_cons,
         'daily_alive_mean_cons': daily_alive_mean_cons,
         'daily_alive_sem_cons': daily_alive_sem_cons,
+        'daily_alive_sd_cons': daily_alive_sd_cons,
         'cumulative_mean_cons': cumulative_mean_cons,
         'has_consumption': has_consumption,
         'has_tconsumption': has_tconsumption,
@@ -606,8 +631,10 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
         'daily_all_tcons': daily_all_tcons,
         'daily_mean_tcons': daily_mean_tcons,
         'daily_sem_tcons': daily_sem_tcons,
+        'daily_sd_tcons': daily_sd_tcons,
         'daily_alive_mean_tcons': daily_alive_mean_tcons,
         'daily_alive_sem_tcons': daily_alive_sem_tcons,
+        'daily_alive_sd_tcons': daily_alive_sd_tcons,
         'cumulative_mean_tcons': cumulative_mean_tcons,
         'metadata': batch_metadata,
         'key': key_from_df

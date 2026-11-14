@@ -124,6 +124,23 @@ def generate_single_file_plot_dict(df, cohort_label="Batch", settings=None, dpi=
         fig_m.savefig(buf_m, format='png', dpi=dpi)
         plt.close(fig_m)
         figs_dict['02_abbott_mortality_curve.png'] = buf_m.getvalue()
+
+        # 2b. Clean Mortality Curve (Alternative View without SE Whiskers)
+        fig_mc, ax_mc = plt.subplots(figsize=(7.5, 5.2), dpi=dpi)
+        ax_mc.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+        if len(days) > 0 and len(m_pts) == len(days):
+            ax_mc.plot(days, m_pts, color='#0284c7', marker='o', linewidth=2.2, markersize=7, markeredgecolor='black', label=f'{cohort_label} (Clean Line)', zorder=3)
+        ax_mc.axhline(50.0, color='#64748b', linestyle=':', linewidth=1.4, label='50% Mortality Threshold')
+        ax_mc.set_title(f"Abbott Mortality (Clean Alternative View): {cohort_label}", fontsize=12.5, fontweight='bold', pad=12)
+        ax_mc.set_xlabel("Observation Time / Days", fontsize=11, fontweight='bold', labelpad=7)
+        ax_mc.set_ylabel("Abbott Corrected Mortality / %", fontsize=11, fontweight='bold', labelpad=7)
+        ax_mc.set_ylim(-2, 105)
+        ax_mc.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+        fig_mc.tight_layout()
+        buf_mc = io.BytesIO()
+        fig_mc.savefig(buf_mc, format='png', dpi=dpi)
+        plt.close(fig_mc)
+        figs_dict['02b_abbott_mortality_clean_alternative.png'] = buf_mc.getvalue()
     except Exception:
         pass
 
@@ -159,6 +176,29 @@ def generate_single_file_plot_dict(df, cohort_label="Batch", settings=None, dpi=
         fig_km.savefig(buf_km, format='png', dpi=dpi)
         plt.close(fig_km)
         figs_dict['03_kaplan_meier_survival.png'] = buf_km.getvalue()
+
+        # 3b. Clean Kaplan-Meier Curve (Alternative View without 95% CI Ribbons)
+        fig_km_c, ax_km_c = plt.subplots(figsize=(7.5, 5.2), dpi=dpi)
+        ax_km_c.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+        if kmf is not None and hasattr(kmf, 'survival_function_'):
+            km_timeline = kmf.survival_function_.index
+            km_vals = kmf.survival_function_['KM_estimate'].values
+            ax_km_c.step(km_timeline, km_vals, where='post', color='#0284c7', linewidth=2.4, label=f'{cohort_label} (Clean KM)', zorder=3)
+            cens_days = durations[events == 0]
+            if len(cens_days) > 0:
+                cens_surv = [kmf.survival_function_at_times(d).values[0] for d in cens_days]
+                ax_km_c.plot(cens_days, cens_surv, '+', color='#0f172a', markersize=9, markeredgewidth=2, label=f'Censored (n={len(cens_days)})', zorder=4)
+        ax_km_c.axhline(0.5, color='#64748b', linestyle=':', linewidth=1.4, label='50% Threshold')
+        ax_km_c.set_title(f"Kaplan-Meier Survival (Clean Alternative View): {cohort_label}", fontsize=12.5, fontweight='bold', pad=12)
+        ax_km_c.set_xlabel("Observation Time / Days", fontsize=11, fontweight='bold', labelpad=7)
+        ax_km_c.set_ylabel("Survival Probability Ŝ(t)", fontsize=11, fontweight='bold', labelpad=7)
+        ax_km_c.set_ylim(-0.02, 1.05)
+        ax_km_c.legend(loc='lower left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+        fig_km_c.tight_layout()
+        buf_km_c = io.BytesIO()
+        fig_km_c.savefig(buf_km_c, format='png', dpi=dpi)
+        plt.close(fig_km_c)
+        figs_dict['03b_kaplan_meier_clean_alternative.png'] = buf_km_c.getvalue()
     except Exception:
         pass
 
@@ -264,7 +304,94 @@ def generate_single_file_plot_dict(df, cohort_label="Batch", settings=None, dpi=
     except Exception:
         pass
 
-    # 6. Daily Sucrose Consumption (if consumption columns exist)
+    # 6. Daily Status Distribution Histogram (with Goodness-of-Fit p-value)
+    try:
+        dead_cts = c.get('dead_counts', [])
+        alive_cts = c.get('alive_counts', [])
+        if len(dead_cts) > 0:
+            fig_hs, ax_hs = plt.subplots(figsize=(7.5, 5.0), dpi=dpi)
+            ax_hs.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
+            x_p = np.arange(len(dead_cts))
+            bw = 0.35
+            ax_hs.bar(x_p - bw/2, alive_cts, bw, label='Alive', color='#10b981', edgecolor='black', linewidth=0.8, zorder=3)
+            ax_hs.bar(x_p + bw/2, dead_cts, bw, label='Dead', color='#ef4444', edgecolor='black', linewidth=0.8, zorder=3)
+            import scipy.stats as sp_stats
+            chi_badge = ""
+            try:
+                if sum(dead_cts) > 0 and len(dead_cts) > 1:
+                    chi_r = sp_stats.chisquare(dead_cts)
+                    p_chi = chi_r.pvalue
+                    p_str = "< 0.001" if p_chi < 0.001 else f"= {p_chi:.4f}"
+                    chi_badge = f"Mortality Uniformity χ² = {chi_r.statistic:.2f}, p {p_str}"
+                else:
+                    chi_badge = "0 Mortality (p = 1.000)"
+            except Exception:
+                chi_badge = ""
+            if chi_badge:
+                ax_hs.text(0.04, 0.90, f"Hypothesis Test:\n{chi_badge}", transform=ax_hs.transAxes,
+                           fontsize=8.5, fontweight='bold', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='#cbd5e1', alpha=0.92))
+            ax_hs.set_xticks(x_p)
+            ax_hs.set_xticklabels([f"Day {i+1}" for i in x_p], rotation=45, ha='right', fontsize=9.0)
+            ax_hs.set_title(f"Daily Status Distribution ({chi_badge}): {cohort_label}", fontsize=11.5, fontweight='bold', pad=10)
+            ax_hs.set_xlabel("Observation Day", fontsize=11, fontweight='bold')
+            ax_hs.set_ylabel("Bee Count", fontsize=11, fontweight='bold')
+            ax_hs.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+            ax_hs.spines['top'].set_visible(False)
+            ax_hs.spines['right'].set_visible(False)
+            fig_hs.tight_layout()
+            buf_hs = io.BytesIO()
+            fig_hs.savefig(buf_hs, format='png', dpi=dpi)
+            plt.close(fig_hs)
+            figs_dict['06_daily_status_distribution_histogram.png'] = buf_hs.getvalue()
+    except Exception:
+        pass
+
+    # 7. Bee Lifespan Distribution Histogram (with Shapiro-Wilk Normality p-value)
+    try:
+        if len(durations) > 0:
+            fig_hl, ax_hl = plt.subplots(figsize=(7.5, 5.0), dpi=dpi)
+            ax_hl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+            import scipy.stats as sp_stats
+            max_d_life = max(durations) if len(durations) > 0 else 14
+            bins_life = np.arange(0.5, max_d_life + 1.5, 1.0)
+            ax_hl.hist(durations, bins=bins_life, color='#0284c7', edgecolor='black', linewidth=1.1, alpha=0.75, zorder=3, label='Bee Lifespan Counts')
+
+            badge_life = ""
+            try:
+                if len(durations) >= 3:
+                    sw_res = sp_stats.shapiro(durations)
+                    sw_w, sw_p = sw_res.statistic, sw_res.pvalue
+                    sw_p_str = "< 0.001" if sw_p < 0.001 else f"= {sw_p:.4f}"
+                    norm_status = "Non-Normal (Weibull Hazard)" if sw_p < 0.05 else "Normal (Gaussian)"
+                    badge_life = f"Shapiro-Wilk Normality:\nW = {sw_w:.3f}, p {sw_p_str}\n({norm_status})"
+                else:
+                    badge_life = f"N = {len(durations)} bees"
+            except Exception:
+                badge_life = f"N = {len(durations)} bees"
+
+            mean_dur = float(np.mean(durations))
+            med_dur = float(np.median(durations))
+            ax_hl.axvline(mean_dur, color='#dc2626', linestyle='--', linewidth=1.8, label=f'Mean = {mean_dur:.1f}d')
+            ax_hl.axvline(med_dur, color='#10b981', linestyle=':', linewidth=1.8, label=f'Median = {med_dur:.1f}d')
+
+            if badge_life:
+                ax_hl.text(0.96, 0.94, badge_life, transform=ax_hl.transAxes, ha='right', va='top',
+                           fontsize=8.5, fontweight='bold', bbox=dict(boxstyle='round,pad=0.35', facecolor='white', edgecolor='#cbd5e1', alpha=0.92))
+            ax_hl.set_title(f"Bee Lifespan Distribution Histogram: {cohort_label}", fontsize=12, fontweight='bold', pad=12)
+            ax_hl.set_xlabel("Lifespan / Observation Duration (Days)", fontsize=11, fontweight='bold')
+            ax_hl.set_ylabel("Number of Bees", fontsize=11, fontweight='bold')
+            ax_hl.legend(loc='upper left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+            ax_hl.spines['top'].set_visible(False)
+            ax_hl.spines['right'].set_visible(False)
+            fig_hl.tight_layout()
+            buf_hl = io.BytesIO()
+            fig_hl.savefig(buf_hl, format='png', dpi=dpi)
+            plt.close(fig_hl)
+            figs_dict['07_bee_lifespan_distribution_histogram.png'] = buf_hl.getvalue()
+    except Exception:
+        pass
+
+    # 8. Daily Sucrose Consumption (if consumption columns exist)
     try:
         if c.get('has_consumption') and c.get('daily_mean_cons'):
             fig_c, ax_c = plt.subplots(figsize=(7.5, 4.8), dpi=dpi)
@@ -281,11 +408,36 @@ def generate_single_file_plot_dict(df, cohort_label="Batch", settings=None, dpi=
             buf_c = io.BytesIO()
             fig_c.savefig(buf_c, format='png', dpi=dpi)
             plt.close(fig_c)
-            figs_dict['06_daily_sucrose_consumption.png'] = buf_c.getvalue()
+            figs_dict['08_daily_sucrose_consumption.png'] = buf_c.getvalue()
     except Exception:
         pass
 
-    # 7. Raw CSV data
+    # 9. Feeding Persistence Kaplan-Meier Step Curve (if feeding cessation data exists)
+    try:
+        from lifelines import KaplanMeierFitter
+        if c.get('has_consumption') and 'feeding_cessation_durations' in c:
+            f_dur = c['feeding_cessation_durations']
+            f_ev = c.get('feeding_cessation_events', np.ones_like(f_dur))
+            if len(f_dur) > 0:
+                fig_kmf, ax_kmf = plt.subplots(figsize=(7.5, 4.8), dpi=dpi)
+                ax_kmf.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1')
+                kmf_fd = KaplanMeierFitter()
+                kmf_fd.fit(f_dur, event_observed=f_ev, label='Feeding Persistence')
+                kmf_fd.plot_survival_function(ax=ax_kmf, color='#059669', ci_show=True, ci_alpha=0.15, linewidth=2.2)
+                ax_kmf.axhline(0.5, color='#475569', linestyle=':', linewidth=1.2, label='50% Threshold (FT50)')
+                ax_kmf.set_title(f"Feeding Persistence KM Curve: {cohort_label}", fontsize=12.5, fontweight='bold', pad=12)
+                ax_kmf.set_xlabel("Elapsed Time / Days", fontsize=11, fontweight='bold')
+                ax_kmf.set_ylabel("Feeding Probability Ŝ_feed(t)", fontsize=11, fontweight='bold')
+                ax_kmf.legend(loc='lower left', frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+                fig_kmf.tight_layout()
+                buf_kmf = io.BytesIO()
+                fig_kmf.savefig(buf_kmf, format='png', dpi=dpi)
+                plt.close(fig_kmf)
+                figs_dict['09_feeding_persistence_km.png'] = buf_kmf.getvalue()
+    except Exception:
+        pass
+
+    # 10. Raw CSV data
     figs_dict[f"data_{clean_safe_lbl}.csv"] = df.to_csv(index=False).encode('utf-8')
 
     return figs_dict
@@ -308,6 +460,13 @@ def get_all_active_batches(uploaded_file_dict=None):
             else:
                 c_name = str(fname)
                 c_df = file_data
+
+            if isinstance(c_df, (bytes, bytearray)):
+                from modules.tab_multi import load_and_standardize_uploaded_file
+                c_df = load_and_standardize_uploaded_file(c_df, fname)
+            elif hasattr(c_df, 'read'):
+                from modules.tab_multi import load_and_standardize_uploaded_file
+                c_df = load_and_standardize_uploaded_file(c_df.read(), fname)
 
             key_val = extract_key_from_df(c_df)
             lbl = key_val if key_val else (c_name if c_name else fname)
@@ -407,6 +566,89 @@ def get_complete_master_zip(settings=None, uploaded_file_dict=None, multi_images
         if summary_df is not None and isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
             zf.writestr("multi_cohort_comparison/multi_csv_probit_summary.csv", summary_df.to_csv(index=False).encode('utf-8'))
 
+        # 1b. Multiple Testing Correction Suite (Bonferroni, Holm, BH FDR, BY FDR, Šidák)
+        cohort_bees = {}
+        try:
+            from modules.core.multi_testing import compute_multiple_corrections, generate_multi_testing_plot
+            from modules.core.bee_extractor import extract_individual_bee_survival
+            from lifelines.statistics import logrank_test
+            from itertools import combinations
+            import scipy.stats as sp_stats
+
+            for fname, (lbl, c_df) in batches.items():
+                b_df = extract_individual_bee_survival(c_df, batch_name=lbl)
+                if b_df is not None and not b_df.empty:
+                    cohort_bees[lbl] = b_df
+
+            if len(cohort_bees) >= 2:
+                p_dict = {}
+                for c1, c2 in combinations(cohort_bees.keys(), 2):
+                    d1, d2 = cohort_bees[c1], cohort_bees[c2]
+                    if np.sum(d1['event']) == 0 and np.sum(d2['event']) == 0:
+                        p_dict[f"{c1} vs {c2}"] = 1.0
+                    else:
+                        try:
+                            res = logrank_test(d1['duration'], d2['duration'], event_observed_A=d1['event'], event_observed_B=d2['event'])
+                            p_dict[f"{c1} vs {c2}"] = float(res.p_value)
+                        except Exception:
+                            p_dict[f"{c1} vs {c2}"] = 1.0
+                if p_dict:
+                    df_mt = compute_multiple_corrections(p_dict)
+                    zf.writestr("multi_cohort_comparison/multi_testing_correction_fdr_summary.csv", df_mt.to_csv(index=False).encode('utf-8'))
+
+                    fig_mt = generate_multi_testing_plot(df_mt, dpi=140)
+                    buf_mt = io.BytesIO()
+                    fig_mt.savefig(buf_mt, format='png', dpi=140, bbox_inches='tight')
+                    plt.close(fig_mt)
+                    zf.writestr("multi_cohort_comparison/15_multiple_testing_correction_pvalues.png", buf_mt.getvalue())
+
+                    from modules.core.multi_testing import generate_pvalue_histogram
+                    fig_phist = generate_pvalue_histogram(p_dict, dpi=140)
+                    buf_phist = io.BytesIO()
+                    fig_phist.savefig(buf_phist, format='png', dpi=140, bbox_inches='tight')
+                    plt.close(fig_phist)
+                    zf.writestr("multi_cohort_comparison/17_pvalue_distribution_histogram.png", buf_phist.getvalue())
+        except Exception:
+            pass
+
+        # 1c. Cross-Cohort Lifespan Distribution Histogram (with Kruskal-Wallis & ANOVA p-values)
+        try:
+            if cohort_bees and len(cohort_bees) >= 2:
+                import scipy.stats as sp_stats
+                cohort_durs = {lbl: df['duration'].values for lbl, df in cohort_bees.items() if 'duration' in df.columns}
+                valid_durs = list(cohort_durs.values())
+                if len(valid_durs) >= 2:
+                    fig_chl, ax_chl = plt.subplots(figsize=(9.2, 5.2), dpi=140)
+                    ax_chl.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+                    kw_res = sp_stats.kruskal(*valid_durs)
+                    an_res = sp_stats.f_oneway(*valid_durs)
+                    kw_p_s = '< 0.0001' if kw_res.pvalue < 0.0001 else f'= {kw_res.pvalue:.4f}'
+                    an_p_s = '< 0.0001' if an_res.pvalue < 0.0001 else f'= {an_res.pvalue:.4f}'
+
+                    palette = ['#2563eb', '#0d9488', '#f59e0b', '#dc2626', '#8b5cf6', '#ec4899', '#06b6d4']
+                    max_d_c = max([max(d) for d in valid_durs if len(d) > 0], default=14)
+                    bins_c = np.arange(0.5, max_d_c + 1.5, 1.0)
+                    for idx_c, (lbl, d_vals) in enumerate(cohort_durs.items()):
+                        c_col = palette[idx_c % len(palette)]
+                        ax_chl.hist(d_vals, bins=bins_c, alpha=0.45, color=c_col, edgecolor='black', linewidth=1.1, label=lbl, zorder=3)
+
+                    badge_c = f"Distribution Tests:\n• Kruskal-Wallis: H = {kw_res.statistic:.2f}, p {kw_p_s}\n• One-Way ANOVA: F = {an_res.statistic:.2f}, p {an_p_s}\n• Starvation Rule: Day 0 Excluded"
+                    ax_chl.text(0.97, 0.94, badge_c, transform=ax_chl.transAxes, ha='right', va='top', fontsize=8.8, fontweight='bold',
+                                bbox=dict(boxstyle='round,pad=0.35', facecolor='white', edgecolor='#cbd5e1', alpha=0.92))
+                    ax_chl.set_title(f"Cross-Cohort Lifespan Distribution Histogram (Kruskal-Wallis p {kw_p_s} | ANOVA p {an_p_s})", fontsize=11.5, fontweight='bold', pad=12)
+                    ax_chl.set_xlabel('Lifespan / Observation Duration (Days)', fontsize=11, fontweight='bold')
+                    ax_chl.set_ylabel('Bee Count', fontsize=11, fontweight='bold')
+                    ax_chl.legend(loc='upper left', frameon=True, facecolor='white', framealpha=0.92, fontsize=8.8)
+                    ax_chl.spines['top'].set_visible(False)
+                    ax_chl.spines['right'].set_visible(False)
+                    fig_chl.tight_layout()
+                    buf_chl = io.BytesIO()
+                    fig_chl.savefig(buf_chl, format='png', dpi=140, bbox_inches='tight')
+                    plt.close(fig_chl)
+                    zf.writestr("multi_cohort_comparison/16_cross_cohort_lifespan_histogram.png", buf_chl.getvalue())
+        except Exception:
+            pass
+
         # 2. Single File Plots Folders (for EVERY active uploaded dataset)
         for idx, (fname, (lbl, df)) in enumerate(batches.items()):
             clean_name = re.sub(r'[/\\:*?"<>|]', '_', str(fname).replace('.csv', ''))
@@ -423,13 +665,19 @@ def get_complete_master_zip(settings=None, uploaded_file_dict=None, multi_images
             "==============================================================\n\n"
             f"• Number of Uploaded/Active Datasets: {len(batches)}\n"
             f"• Single-File Analysis Figures: {total_single_figs} plots across {len(batches)} dataset folders\n"
-            f"• Multi-Cohort Comparison Figures: {len(multi_images)} plots\n"
+            f"• Multi-Cohort Comparison Figures & Summaries: {len(multi_images) + 2} files\n"
             "• Resolution: Publication-grade 140–300 DPI\n"
-            "• Bioassay Protocol: Post-2h Starvation Rule Compliant (Day 0 Baseline Excluded)\n\n"
+            "• Bioassay Protocol: Post-2h Starvation Rule Compliant (Day 0 Baseline Excluded)\n"
+            "• Multiple Testing Corrections: Bonferroni, Holm, Benjamini-Hochberg FDR (E[V/R]), BY, Šidák\n"
+            "• Distribution Diagnostics: Goodness-of-Fit χ², Shapiro-Wilk, Kruskal-Wallis, One-Way ANOVA p-values\n\n"
             "DIRECTORY STRUCTURE:\n"
-            "├── multi_cohort_comparison/     (Cross-cohort comparative Probit, Mortality, Survival, LT50 bars, and Summary CSV)\n"
+            "├── multi_cohort_comparison/     (Cross-cohort Probit, Faceted Grid, Mortality, Survival, LT50 bars,\n"
+            "│                                Lifespan Distribution Histogram with p-values, Multiple Testing\n"
+            "│                                Correction P-value Plot, and FDR Summary CSV)\n"
             "└── single_file_plots/           (Dedicated subfolder for every single file containing individual Probit,\n"
-            "                                 Abbott mortality, Kaplan-Meier, 4-panel figure, LT profile, and raw CSV)\n"
+            "                                 Standard & Clean Abbott mortality, Standard & Clean Kaplan-Meier,\n"
+            "                                 Daily Status Histogram with χ² p-value, Lifespan Histogram with\n"
+            "                                 Shapiro-Wilk p-value, 4-panel publication composite, LT profile, and raw CSV)\n"
         )
         zf.writestr("MANIFEST_SUMMARY.txt", manifest_text.encode('utf-8'))
 

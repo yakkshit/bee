@@ -52,6 +52,10 @@ render_metadata_expander()
 from modules.global_exporter import render_header_global_download
 render_header_global_download(settings=settings)
 
+# Global Plot Search & Direct Navigator
+from modules.plot_search import render_global_plot_search
+render_global_plot_search()
+
 # Main Application Tabs
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🐝 Single CSV Analysis",

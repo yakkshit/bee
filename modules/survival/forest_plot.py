@@ -149,11 +149,15 @@ def render_hazard_ratio_forest_plot(table_rows, group_col='cohort', key_suffix: 
 
     buf_fp = io.BytesIO()
     fig_fp.savefig(buf_fp, format="png", dpi=300, bbox_inches='tight')
+    fp_bytes = buf_fp.getvalue()
+    if 'multi_plot_images' not in st.session_state:
+        st.session_state['multi_plot_images'] = {}
+    st.session_state['multi_plot_images']['cox_forest_plot.png'] = fp_bytes
 
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
         fp_k = f"dl_cox_forest_{group_col}_{key_suffix}" if key_suffix else f"dl_cox_forest_{group_col}"
-        st.download_button("📥 Download Forest Plot (PNG)", data=buf_fp.getvalue(), file_name="cox_forest_plot.png", mime="image/png", key=fp_k)
+        st.download_button("📥 Download Forest Plot (PNG)", data=fp_bytes, file_name="cox_forest_plot.png", mime="image/png", key=fp_k)
     with col_dl2:
         if res_df is not None:
             sum_k = f"dl_cox_summary_{group_col}_{key_suffix}" if key_suffix else f"dl_cox_summary_{group_col}"

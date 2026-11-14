@@ -376,7 +376,60 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
     # PLOT 5.2: DAY-BY-DAY GROUPED BAR CHART OF SUCROSE & TREATMENT CONSUMPTION
     # =========================================================================
     st.subheader("5.2 Day-by-Day Grouped Bar Chart Comparison")
-    st.caption("Granular day-by-day comparison of intake: directly compares the average intake across all cohorts on each individual experimental day. Whiskers denote ± Standard Error of Mean (SEM); degrees of freedom: $df = N_{\\mathrm{alive}} - 1$.")
+    st.caption("Granular day-by-day comparison of intake: directly compares the average intake across all cohorts on each individual experimental day. Whiskers denote selected dispersion metric (SEM / SD); degrees of freedom: $df = N_{\\mathrm{alive}} - 1$.")
+
+    col_gb_ctrl1, col_gb_ctrl2 = st.columns([2.2, 1.8])
+    with col_gb_ctrl1:
+        gb_view_opt = st.radio(
+            "Plot Layout Comparison Mode:",
+            [
+                "📊 Grouped Bars (All-in-One)",
+                "🗂️ Faceted Panels (Small Multiples - Overlap-Free)",
+                "📈 Trajectory Lines with Error Whiskers"
+            ],
+            index=0,
+            horizontal=True,
+            key="gb_shared_view_mode",
+            help="Switch between grouped bars, dedicated faceted panels for each cohort, or trajectory lines to eliminate bar crowding."
+        )
+    with col_gb_ctrl2:
+        whisker_choice = st.radio(
+            "Error Whisker Metric (Black on each bar):",
+            ["±1 Standard Error (SEM)", "±1 Standard Deviation (SD)", "None (Clean Bars)"],
+            index=0,
+            horizontal=True,
+            key="gb_shared_whisker_choice",
+            help="Black whiskers on bars indicate dispersion. SEM = SD / √N (precision of mean); SD = sample dispersion across individual bees."
+        )
+
+    whisker_label = (
+        "Black Whisker: ±1 SEM (SE of Mean)" if whisker_choice == "±1 Standard Error (SEM)"
+        else ("Black Whisker: ±1 SD (Sample Std Dev)" if whisker_choice == "±1 Standard Deviation (SD)" else None)
+    )
+
+    def get_cohort_dispersion(b, is_tcons=False):
+        if whisker_choice == "None (Clean Bars)":
+            return None
+        if not is_tcons:
+            if whisker_choice == "±1 Standard Error (SEM)":
+                return b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
+            else:
+                sd = b.get('daily_alive_sd_cons', b.get('daily_sd_cons')) if use_alive_only else b.get('daily_sd_cons')
+                if sd is None or len(sd) == 0:
+                    sem = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
+                    n_bees = max(1, len(b.get('individual_bees', [])))
+                    sd = np.array(sem) * np.sqrt(n_bees)
+                return sd
+        else:
+            if whisker_choice == "±1 Standard Error (SEM)":
+                return b.get('daily_alive_sem_tcons', b.get('daily_sem_tcons')) if use_alive_only else b.get('daily_sem_tcons')
+            else:
+                sd = b.get('daily_alive_sd_tcons', b.get('daily_sd_tcons')) if use_alive_only else b.get('daily_sd_tcons')
+                if sd is None or len(sd) == 0:
+                    sem = b.get('daily_alive_sem_tcons', b.get('daily_sem_tcons')) if use_alive_only else b.get('daily_sem_tcons')
+                    n_bees = max(1, len(b.get('individual_bees', [])))
+                    sd = np.array(sem) * np.sqrt(n_bees)
+                return sd
 
     tab_gb_sucrose, tab_gb_tcons, tab_gb_dual = st.tabs([
         "🍯 Sucrose Consumption (Cons)",
@@ -389,25 +442,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
     day_indices = np.arange(max_days_count)
 
     with tab_gb_sucrose:
-        col_gb_ctrl1, col_gb_ctrl2 = st.columns([2.5, 1.5])
-        with col_gb_ctrl1:
-            gb_view_opt = st.radio(
-                "Plot Layout Comparison Mode:",
-                [
-                    "📊 Grouped Bars (All-in-One)",
-                    "🗂️ Faceted Panels (Small Multiples - Overlap-Free)",
-                    "📈 Trajectory Lines with SEM Error Bars"
-                ],
-                index=0,
-                horizontal=True,
-                key="gb_sucrose_view_mode",
-                help="Switch between grouped bars, dedicated faceted panels for each cohort, or trajectory lines to eliminate bar crowding."
-            )
-        with col_gb_ctrl2:
-            show_gb_whiskers = st.checkbox("Show ± SEM Error Whiskers", value=True, key="gb_sucrose_whiskers_chk")
-
         if gb_view_opt == "🗂️ Faceted Panels (Small Multiples - Overlap-Free)":
-            # Faceted layout: one dedicated subplot per cohort, completely eliminating overlaps
             n_facets = len(batches_with_cons)
             n_cols = min(3, max(1, n_facets))
             n_rows = (n_facets + n_cols - 1) // n_cols
@@ -424,7 +459,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             for idx, b in enumerate(batches_with_cons):
                 ax_f = axes_list[idx]
                 mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
-                sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
+                err_series = get_cohort_dispersion(b, is_tcons=False)
                 d_count = len(mean_series)
                 d_x = np.arange(d_count)
                 b_lbl = get_c_label(b)
@@ -433,7 +468,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
                 ax_f.bar(
                     d_x, mean_series,
                     width=0.65,
-                    yerr=sem_series if (show_gb_whiskers and show_sem_ribbon) else None,
+                    yerr=err_series if err_series is not None else None,
                     capsize=2.2,
                     error_kw=dict(elinewidth=0.9, ecolor='#0f172a', capthick=0.9),
                     color=b['color'], edgecolor='black', linewidth=1.1,
@@ -457,14 +492,13 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             fig_grouped_bars.tight_layout()
             st.pyplot(fig_grouped_bars)
 
-        elif gb_view_opt == "📈 Trajectory Lines with SEM Error Bars":
-            # Connected time-series line comparison with SEM whiskers
+        elif gb_view_opt == "📈 Trajectory Lines with Error Whiskers":
             fig_grouped_bars, ax_ln = plt.subplots(figsize=(12.5, 5.8), dpi=130)
             ax_ln.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
 
             for idx, b in enumerate(batches_with_cons):
                 mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
-                sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
+                err_series = get_cohort_dispersion(b, is_tcons=False)
                 b_lbl = get_c_label(b)
                 offset = (idx - (num_batches - 1) / 2.0) * jitter_val * 4.0
                 d_x = np.arange(1, len(mean_series) + 1) + offset
@@ -475,9 +509,9 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
                     linewidth=line_width, markersize=marker_size, markeredgecolor='black',
                     label=b_lbl, zorder=3
                 )
-                if show_gb_whiskers and show_sem_ribbon:
+                if err_series is not None:
                     ax_ln.errorbar(
-                        d_x, mean_series, yerr=sem_series,
+                        d_x, mean_series, yerr=err_series,
                         fmt='none', ecolor=b['color'], elinewidth=1.1, capsize=2.2, capthick=0.9, zorder=4
                     )
 
@@ -490,31 +524,33 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             ax_ln.spines['top'].set_visible(False)
             ax_ln.spines['right'].set_visible(False)
 
-            fig_grouped_bars.subplots_adjust(left=0.08, right=0.76, top=0.92, bottom=0.14)
-            ax_ln.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+            fig_grouped_bars.subplots_adjust(left=0.08, right=0.74, top=0.92, bottom=0.14)
+            handles_ln, labels_ln = ax_ln.get_legend_handles_labels()
+            if whisker_label:
+                handles_ln.append(Line2D([0], [0], color='#1e293b', marker='|', linestyle='-', markersize=8, markeredgewidth=1.5, label=whisker_label))
+                labels_ln.append(whisker_label)
+            ax_ln.legend(handles=handles_ln, labels=labels_ln, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
             st.pyplot(fig_grouped_bars)
 
         else:
-            # 📊 Grouped Bars (All-in-One) with spacious canvas, sleek whiskers, and outside legend
             fig_grouped_bars, ax_gb = plt.subplots(figsize=(13.0, 5.8), dpi=130)
             ax_gb.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
             for idx, b in enumerate(batches_with_cons):
                 mean_series = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
-                sem_series = b.get('daily_alive_sem_cons', b.get('daily_sem_cons')) if use_alive_only else b.get('daily_sem_cons')
+                err_series = get_cohort_dispersion(b, is_tcons=False)
 
                 padded_means = [mean_series[d] if d < len(mean_series) else 0.0 for d in range(max_days_count)]
-                padded_sems = [sem_series[d] if d < len(sem_series) else 0.0 for d in range(max_days_count)]
+                padded_errs = [err_series[d] if d < len(err_series) else 0.0 for d in range(max_days_count)] if err_series is not None else None
 
                 bar_positions = day_indices - (total_bar_width / 2.0) + (idx + 0.5) * single_bar_width
-
                 b_lbl = get_c_label(b)
                 bars = ax_gb.bar(
                     bar_positions, padded_means,
                     width=single_bar_width * 0.90,
-                    yerr=padded_sems if (show_gb_whiskers and show_sem_ribbon) else None,
-                    capsize=1.8,
-                    error_kw=dict(elinewidth=0.85, ecolor='#1e293b', capthick=0.85),
+                    yerr=padded_errs,
+                    capsize=2.2,
+                    error_kw=dict(elinewidth=0.95, ecolor='#1e293b', capthick=0.95),
                     color=b['color'], edgecolor='black', linewidth=1.0,
                     label=b_lbl,
                     zorder=3
@@ -540,9 +576,12 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             ax_gb.spines['top'].set_visible(False)
             ax_gb.spines['right'].set_visible(False)
 
-            # Outside legend to eliminate data bar overlap completely
-            fig_grouped_bars.subplots_adjust(left=0.07, right=0.76, top=0.92, bottom=0.14)
-            ax_gb.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+            fig_grouped_bars.subplots_adjust(left=0.07, right=0.74, top=0.92, bottom=0.14)
+            handles_gb, labels_gb = ax_gb.get_legend_handles_labels()
+            if whisker_label:
+                handles_gb.append(Line2D([0], [0], color='#1e293b', marker='|', linestyle='-', markersize=8, markeredgewidth=1.5, label=whisker_label))
+                labels_gb.append(whisker_label)
+            ax_gb.legend(handles=handles_gb, labels=labels_gb, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
             st.pyplot(fig_grouped_bars)
 
         cohort_lengths = {get_c_label(b): len(b.get('daily_mean_cons', [])) for i, b in enumerate(batches_with_cons)}
@@ -565,19 +604,19 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
             for idx, b in enumerate(batches_with_cons):
                 mean_tseries = b.get('daily_alive_mean_tcons', b.get('daily_mean_tcons')) if use_alive_only else b.get('daily_mean_tcons')
-                sem_tseries = b.get('daily_alive_sem_tcons', b.get('daily_sem_tcons')) if use_alive_only else b.get('daily_sem_tcons')
+                err_tseries = get_cohort_dispersion(b, is_tcons=True)
 
                 padded_tmeans = [mean_tseries[d] if d < len(mean_tseries) else 0.0 for d in range(max_days_count)]
-                padded_tsems = [sem_tseries[d] if d < len(sem_tseries) else 0.0 for d in range(max_days_count)]
+                padded_terrs = [err_tseries[d] if d < len(err_tseries) else 0.0 for d in range(max_days_count)] if err_tseries is not None else None
 
                 bar_positions = day_indices - (total_bar_width / 2.0) + (idx + 0.5) * single_bar_width
-
                 b_lbl = get_c_label(b)
                 tbars = ax_tgb.bar(
                     bar_positions, padded_tmeans,
                     width=single_bar_width * 0.90,
-                    yerr=padded_tsems if show_sem_ribbon else None,
-                    capsize=3.0,
+                    yerr=padded_terrs,
+                    capsize=2.5,
+                    error_kw=dict(elinewidth=0.95, ecolor='#1e293b', capthick=0.95),
                     color=b['color'], edgecolor='black', linewidth=1.0,
                     label=b_lbl,
                     zorder=3
@@ -602,8 +641,13 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             ax_tgb.set_ylim(0, None)
             ax_tgb.spines['top'].set_visible(False)
             ax_tgb.spines['right'].set_visible(False)
-            fig_tgb.subplots_adjust(left=0.07, right=0.76, top=0.92, bottom=0.14)
-            ax_tgb.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
+            fig_tgb.subplots_adjust(left=0.07, right=0.74, top=0.92, bottom=0.14)
+
+            handles_tgb, labels_tgb = ax_tgb.get_legend_handles_labels()
+            if whisker_label:
+                handles_tgb.append(Line2D([0], [0], color='#1e293b', marker='|', linestyle='-', markersize=8, markeredgewidth=1.5, label=whisker_label))
+                labels_tgb.append(whisker_label)
+            ax_tgb.legend(handles=handles_tgb, labels=labels_tgb, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=9.0)
             st.pyplot(fig_tgb)
 
             buf_tgb = io.BytesIO()
@@ -618,40 +662,57 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
 
     with tab_gb_dual:
         if has_any_tcons:
-            fig_dual_gb, (ax_dgb1, ax_dgb2) = plt.subplots(1, 2, figsize=(14.0, 5.8), dpi=130, sharex=True)
+            fig_dual_gb, (ax_dgb1, ax_dgb2) = plt.subplots(1, 2, figsize=(15.0, 5.8), dpi=130)
             ax_dgb1.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
             ax_dgb2.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', axis='y', zorder=1)
 
             for idx, b in enumerate(batches_with_cons):
                 m_cons = b.get('daily_alive_mean_cons', b.get('daily_mean_cons')) if use_alive_only else b.get('daily_mean_cons')
                 m_tcons = b.get('daily_alive_mean_tcons', b.get('daily_mean_tcons')) if use_alive_only else b.get('daily_mean_tcons')
+                err_cons = get_cohort_dispersion(b, is_tcons=False)
+                err_tcons = get_cohort_dispersion(b, is_tcons=True)
 
                 p_cons = [m_cons[d] if d < len(m_cons) else 0.0 for d in range(max_days_count)]
                 p_tcons = [m_tcons[d] if d < len(m_tcons) else 0.0 for d in range(max_days_count)]
+                p_err_cons = [err_cons[d] if d < len(err_cons) else 0.0 for d in range(max_days_count)] if err_cons is not None else None
+                p_err_tcons = [err_tcons[d] if d < len(err_tcons) else 0.0 for d in range(max_days_count)] if err_tcons is not None else None
 
                 bar_pos = day_indices - (total_bar_width / 2.0) + (idx + 0.5) * single_bar_width
                 b_lbl = get_c_label(b)
 
-                ax_dgb1.bar(bar_pos, p_cons, width=single_bar_width * 0.90, color=b['color'], edgecolor='black', linewidth=1.0, label=b_lbl, zorder=3)
-                ax_dgb2.bar(bar_pos, p_tcons, width=single_bar_width * 0.90, color=b['color'], edgecolor='black', linewidth=1.0, label=b_lbl, zorder=3)
+                ax_dgb1.bar(
+                    bar_pos, p_cons, width=single_bar_width * 0.90,
+                    yerr=p_err_cons, capsize=2.0, error_kw=dict(elinewidth=0.85, ecolor='#1e293b', capthick=0.85),
+                    color=b['color'], edgecolor='black', linewidth=1.0, label=b_lbl, zorder=3
+                )
+                ax_dgb2.bar(
+                    bar_pos, p_tcons, width=single_bar_width * 0.90,
+                    yerr=p_err_tcons, capsize=2.0, error_kw=dict(elinewidth=0.85, ecolor='#1e293b', capthick=0.85),
+                    color=b['color'], edgecolor='black', linewidth=1.0, label=b_lbl, zorder=3
+                )
 
             ax_dgb1.set_title("Sucrose Consumption (Cons)", fontsize=12.5, fontweight='bold', pad=10)
             ax_dgb1.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
             ax_dgb1.set_ylabel("Sucrose Intake (µL / bee)", fontsize=11.5, fontweight='bold')
             ax_dgb1.spines['top'].set_visible(False)
             ax_dgb1.spines['right'].set_visible(False)
+            ax_dgb1.set_xticks(day_indices)
+            ax_dgb1.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=9.5, fontweight='bold')
 
             ax_dgb2.set_title("Treatment Solution Consumption (TCons)", fontsize=12.5, fontweight='bold', pad=10)
             ax_dgb2.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
             ax_dgb2.set_ylabel("Treatment Intake (µL / bee)", fontsize=11.5, fontweight='bold')
             ax_dgb2.spines['top'].set_visible(False)
             ax_dgb2.spines['right'].set_visible(False)
+            ax_dgb2.set_xticks(day_indices)
+            ax_dgb2.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=9.5, fontweight='bold')
 
-            ax_dgb1.set_xticks(day_indices)
-            ax_dgb1.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=9.5, fontweight='bold')
-
-            fig_dual_gb.subplots_adjust(left=0.06, right=0.82, top=0.90, bottom=0.14)
-            ax_dgb2.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
+            fig_dual_gb.subplots_adjust(left=0.06, right=0.76, top=0.90, bottom=0.18, wspace=0.25)
+            handles_dual, labels_dual = ax_dgb2.get_legend_handles_labels()
+            if whisker_label:
+                handles_dual.append(Line2D([0], [0], color='#1e293b', marker='|', linestyle='-', markersize=8, markeredgewidth=1.5, label=whisker_label))
+                labels_dual.append(whisker_label)
+            ax_dgb2.legend(handles=handles_dual, labels=labels_dual, loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=True, facecolor='white', edgecolor='#cbd5e1', fontsize=8.5)
             st.pyplot(fig_dual_gb)
 
             buf_dual_gb = io.BytesIO()

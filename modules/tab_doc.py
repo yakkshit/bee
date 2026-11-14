@@ -243,7 +243,7 @@ def render_doc_page():
             st.latex(r"95\% \text{ CI} = \left[\exp\left(\hat{\beta}_j - 1.96 \cdot \text{SE}(\hat{\beta}_j)\right), \, \exp\left(\hat{\beta}_j + 1.96 \cdot \text{SE}(\hat{\beta}_j)\right)\right]")
 
         # 3.7 Consumption Dynamics
-        with st.expander("🍯 7. Sucrose vs. Treatment Solution Consumption Dynamics", expanded=False):
+        with st.expander("🍯 7. Sucrose vs. Treatment Solution Consumption Dynamics & Error Whiskers", expanded=False):
             st.markdown(r"""
             #### Daily Intake Formula
             Daily liquid consumption per living bee ($\mu\text{L} / \text{bee} / \text{day}$):
@@ -253,6 +253,81 @@ def render_doc_page():
             - **Caloric Sucrose Intake (`Cons`)**: Baseline feeding from 50% w/w sucrose solution.
             - **Treatment Solution Intake (`TCons`)**: Ingested volume of test chemical/acetone solution.
             - **Nutritional Anorexia**: Significant drops in sucrose consumption relative to control indicate feeding deterrence, gustatory aversion, or neurotoxic suppression.
+            
+            #### Dispersion Metrics on Bars (Whiskers in Legend)
+            - **Standard Error of Mean (SEM)**: $\text{SEM} = \frac{\text{SD}}{\sqrt{N_{\text{alive}, d}}}$. Measures inferential precision of the estimated cohort mean.
+            - **Sample Standard Deviation (SD)**: $\text{SD} = \sqrt{\frac{1}{N-1} \sum_{i=1}^N (x_i - \bar{x})^2}$. Measures biological behavioral variance across individual bees.
+            - Whiskers in the legend explicitly indicate: `Black Whisker: ±1 SEM` or `Black Whisker: ±1 SD`.
+            """)
+
+        # 3.8 Multiple Testing & FDR Suite
+        with st.expander("🔬 8. Multiple Hypothesis Testing, False Discovery Rate (FDR) & Confusion Matrix", expanded=False):
+            st.markdown(r"""
+            #### Multiplicity Dilemma in Bioassays
+            When conducting $m$ simultaneous pairwise statistical comparisons across experimental cohorts, the cumulative probability of at least one spurious false positive (Type I error) inflates according to:
+            $$\alpha_{\text{global}} = 1 - (1 - \alpha)^m \quad (\text{for } m = 6, \, \alpha_{\text{global}} = 26.5\%)$$
+            
+            #### Theoretical Outcomes Matrix ($2 \times 2$ Confusion Matrix)
+            | Truth \ Decision | Declared Significant (Reject $H_0$) | Declared Non-Significant (Retain $H_0$) | Total Hypotheses |
+            | :--- | :---: | :---: | :---: |
+            | **$H_0$ True (No Effect)** | $V$ (False Positives / Type I) | $U$ (True Negatives) | $m_0$ |
+            | **$H_1$ True (Real Effect)** | $S$ (True Positives) | $T$ (False Negatives / Type II) | $m - m_0$ |
+            | **Total Decisions** | $R$ (Total Discoveries / Rejections) | $m - R$ (Retained Hypotheses) | $m$ |
+
+            - **$V$**: Number of False Positives (Type I errors, spurious toxic claims).
+            - **$T$**: Number of False Negatives (Type II errors, missed toxicity).
+            - **$S$**: Number of True Positives (genuine biological discoveries).
+            - **$U$**: Number of True Negatives (correctly retained non-toxic cohorts).
+            - **$R = V + S$**: Total number of rejected null hypotheses.
+            
+            #### Error Control Metrics
+            1. **Family-Wise Error Rate (FWER)**:
+            $$\text{FWER} = P(V \ge 1)$$
+            Guarantees probability of making even a single false discovery is strictly $\le \alpha$.
+            
+            2. **False Discovery Rate (FDR)**:
+            $$\text{FDR} = E\left[\frac{V}{R}\right], \quad \text{with } \frac{V}{R} = 0 \text{ when } R = 0$$
+            Controls the expected proportion of false discoveries among all declared significant findings ($\le q$).
+            
+            #### Multiplicity Correction Formulations
+            - **Bonferroni Single-Step (FWER)**:
+              $$p_{\text{adj}} = \min(1, \, m \cdot p_{\text{raw}})$$
+              Ultra-conservative baseline benchmark.
+              
+            - **Holm-Bonferroni Step-Down (FWER)**:
+              Sort raw p-values: $p_{(1)} \le p_{(2)} \le \dots \le p_{(m)}$.
+              Reject while $p_{(i)} \le \frac{\alpha}{m - i + 1}$. Uniformly more powerful than Bonferroni while maintaining exact FWER control.
+              
+            - **Benjamini-Hochberg (BH Step-Up FDR)**:
+              Find largest rank $k$ such that:
+              $$p_{(k)} \le \frac{k}{m} q$$
+              Rejects all $H_{(1)}, \dots, H_{(k)}$. Yields expected false discoveries bounded by:
+              $$E[V] \le q \cdot R$$
+              
+            - **Benjamini-Yekutieli (BY Step-Up FDR)**:
+              Provides guaranteed FDR control under arbitrary positive or negative statistical dependencies:
+              $$p_{(k)} \le \frac{k}{m \cdot c(m)} q, \quad c(m) = \sum_{j=1}^m \frac{1}{j} \approx \ln(m) + \gamma$$
+            """)
+
+        # 3.9 P-Value Distribution & Test Differences
+        with st.expander("📉 9. P-Value Distribution Histograms & Log-Rank vs. Kruskal-Wallis Distinctions", expanded=False):
+            st.markdown(r"""
+            #### Diagnostic P-Value Distribution Histogram
+            Under the composite null hypothesis $H_0$ where no treatment effect exists, raw p-values follow a continuous uniform distribution:
+            $$p \sim U(0, 1)$$
+            - **Expected Null Line**: Frequency per bin is uniform: $E[N_{\text{bin}}] = m \times \Delta w$.
+            - **Anti-Conservative Spike**: In the presence of authentic toxic effects, p-values concentrate intensely in the $[0, 0.05)$ interval.
+            - Visual inspection of the histogram provides an immediate meta-statistical check of biological signal-to-noise ratio.
+            
+            #### Mantel-Cox Log-Rank vs. Kruskal-Wallis Test Distinctions
+            - **Mantel-Cox Log-Rank Test**:
+              - Evaluates instantaneous hazard rates $h(t)$ over continuous time under non-informative right-censoring.
+              - Sensitive to early or sustained differences in proportional survival hazards.
+              - When survival curves cross or converge at late timepoints, the Log-Rank statistic may yield borderline/marginal p-values (e.g. $p \approx 0.0505$).
+            - **Kruskal-Wallis Rank Sum Test**:
+              - Non-parametric global rank test evaluating whether median survival times / lifespan rank-sums differ across cohorts.
+              - Unaffected by hazard proportionality; detects strong overall shifts in median longevity (e.g. $p = 0.0139 < 0.05$).
+            - The studio provides dual reporting of both tests to deliver a complete, transparent biostatistical assessment.
             """)
 
     # TAB 4: Code Snippets

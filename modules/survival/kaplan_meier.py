@@ -293,8 +293,12 @@ def render_kaplan_meier_analysis(survival_df, group_col='cohort', color_map=None
 
     buf_km = io.BytesIO()
     fig_km.savefig(buf_km, format="png", dpi=300, bbox_inches='tight')
+    km_bytes = buf_km.getvalue()
+    if 'multi_plot_images' not in st.session_state:
+        st.session_state['multi_plot_images'] = {}
+    st.session_state['multi_plot_images']['kaplan_meier_survival_curves.png'] = km_bytes
     dl_km_key = f"dl_km_plot_standalone_{group_col}_{key_suffix}" if key_suffix else f"dl_km_plot_standalone_{group_col}"
-    st.download_button("📥 Download Kaplan-Meier Multi-Cohort Plot (PNG)", data=buf_km.getvalue(), file_name="kaplan_meier_survival_curves.png", mime="image/png", key=dl_km_key)
+    st.download_button("📥 Download Kaplan-Meier Multi-Cohort Plot (PNG)", data=km_bytes, file_name="kaplan_meier_survival_curves.png", mime="image/png", key=dl_km_key)
     plt.close(fig_km)
 
     st.markdown(f"#### 👥 Cohort / Stratum Breakdown & {metric_label_name} Summary")

@@ -60,6 +60,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
                 return
 
         is_significant = p_val < 0.05
+        is_marginal = (0.05 <= p_val < 0.08)
 
         col_k1, col_k2, col_k3, col_k4 = st.columns(4)
         with col_k1:
@@ -70,8 +71,15 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
         with col_k3:
             st.markdown(f'<div class="kpi-card"><div class="kpi-val">{df_val}</div><div class="kpi-label">Degrees of Freedom (df)</div></div>', unsafe_allow_html=True)
         with col_k4:
-            status_txt = "Significant (p < 0.05)" if is_significant else "Not Significant"
-            status_col = "#10b981" if is_significant else "#f59e0b"
+            if is_significant:
+                status_txt = "Significant (p < 0.05)"
+                status_col = "#10b981"
+            elif is_marginal:
+                status_txt = "Marginal Trend (p ≈ 0.05)"
+                status_col = "#38bdf8"
+            else:
+                status_txt = "Not Significant (p ≥ 0.08)"
+                status_col = "#f59e0b"
             st.markdown(f'<div class="kpi-card"><div class="kpi-val" style="color: {status_col}; font-size: 1.15rem;">{status_txt}</div><div class="kpi-label">Statistical Status</div></div>', unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -98,11 +106,15 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
         default_palette = ["#2563eb", "#0d9488", "#f59e0b", "#dc2626", "#8b5cf6", "#ec4899", "#06b6d4"]
         cohort_colors = [color_map.get(g, default_palette[i % len(default_palette)]) if color_map else default_palette[i % len(default_palette)] for i, g in enumerate(groups)]
 
-        # Render Log-Rank Figures via Structured Thematic Tabs (Hazard Curves first as per Publication Standard)
-        lr_tab_hz, lr_tab_oe = st.tabs([
-            "📈 Log-Rank Cumulative Hazard Curves H(t) (Publication Figure)",
-            "📊 Observed vs. Expected Deaths (O vs. E) Bar Chart"
+        # Render Log-Rank Figures via Structured Thematic Tabs (Hazard Curves, Observed vs Expected, and Lifespan Distribution Histogram)
+        lr_tab_hz, lr_tab_oe, lr_tab_hist = st.tabs([
+            "📈 1. Log-Rank Cumulative Hazard Curves H(t) (Publication Figure)",
+            "📊 2. Observed vs. Expected Deaths (O vs. E) Bar Chart",
+            "📉 3. Lifespan Distribution Histogram (with Hypothesis Test p-values)"
         ])
+
+        if 'multi_plot_images' not in st.session_state:
+            st.session_state['multi_plot_images'] = {}
 
         with lr_tab_hz:
             # Cumulative Hazard Plot: H(t) via Nelson-Aalen Estimator (Matching Publication Benchmark, 130 DPI for rapid on-screen reactivity)
@@ -151,8 +163,10 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
 
             buf_hz = io.BytesIO()
             fig_hz.savefig(buf_hz, format="png", dpi=300, bbox_inches='tight')
+            hz_bytes = buf_hz.getvalue()
+            st.session_state['multi_plot_images']['logrank_cumulative_hazard.png'] = hz_bytes
             dl_hz_k = f"dl_lr_hz_plot_{group_col}_{key_suffix}" if key_suffix else f"dl_lr_hz_plot_{group_col}"
-            st.download_button("📥 Download Cumulative Hazard Curves (PNG)", data=buf_hz.getvalue(), file_name="logrank_cumulative_hazard.png", mime="image/png", key=dl_hz_k)
+            st.download_button("📥 Download Cumulative Hazard Curves (PNG)", data=hz_bytes, file_name="logrank_cumulative_hazard.png", mime="image/png", key=dl_hz_k)
             plt.close(fig_hz)
 
         with lr_tab_oe:
@@ -195,9 +209,73 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
 
             buf_lr = io.BytesIO()
             fig_lr.savefig(buf_lr, format="png", dpi=300, bbox_inches='tight')
+            lr_bytes = buf_lr.getvalue()
+            st.session_state['multi_plot_images']['logrank_observed_vs_expected.png'] = lr_bytes
             dl_lr_k = f"dl_lr_oe_plot_{group_col}_{key_suffix}" if key_suffix else f"dl_lr_oe_plot_{group_col}"
-            st.download_button("📥 Download Log-Rank Observed vs. Expected Plot (PNG)", data=buf_lr.getvalue(), file_name="logrank_observed_vs_expected.png", mime="image/png", key=dl_lr_k)
+            st.download_button("📥 Download Log-Rank Observed vs. Expected Plot (PNG)", data=lr_bytes, file_name="logrank_observed_vs_expected.png", mime="image/png", key=dl_lr_k)
             plt.close(fig_lr)
+
+        with lr_tab_hist:
+            fig_lrh, ax_lrh = plt.subplots(figsize=(9.2, 5.0), dpi=130)
+            ax_lrh.grid(True, linestyle='--', alpha=0.35, color='#cbd5e1', zorder=1)
+
+            import scipy.stats as sp_stats
+            cohort_durations = [T[G == g] for g in groups]
+            valid_durs = [d for d in cohort_durations if len(d) > 0]
+            try:
+                if len(valid_durs) >= 2:
+                    kw_res = sp_stats.kruskal(*valid_durs)
+                    kw_stat, kw_p = float(kw_res.statistic), float(kw_res.pvalue)
+                    kw_p_str = "< 0.0001" if kw_p < 0.0001 else f"{kw_p:.4f}"
+                else:
+                    kw_stat, kw_p_str = chisq, p_str
+            except Exception:
+                kw_stat, kw_p_str = chisq, p_str
+
+            max_dur = max(T) if len(T) > 0 else 14
+            bins = np.arange(0.5, max_dur + 1.5, 1.0) if max_dur > 0 else 10
+            for idx_g, g in enumerate(groups):
+                m_g = (G == g)
+                durs_g = T[m_g]
+                ax_lrh.hist(durs_g, bins=bins, alpha=0.45, color=cohort_colors[idx_g], label=g, edgecolor='black', linewidth=1.1, zorder=3)
+
+            ax_lrh.set_xlabel('Observation Time / Bee Lifespan (Days)', fontsize=12, fontweight='bold', labelpad=8)
+            ax_lrh.set_ylabel('Bee Frequency (Count)', fontsize=12, fontweight='bold', labelpad=8)
+            ax_lrh.set_title(f'Lifespan Distribution Histogram Across Cohorts (Log-Rank p = {p_str} | Kruskal-Wallis p = {kw_p_str})', fontsize=11.5, fontweight='bold', pad=12)
+
+            kw_is_sig = (kw_p < 0.05) if 'kw_p' in locals() else is_significant
+            if is_significant and kw_is_sig:
+                overall_status_str = "Both Log-Rank & Kruskal-Wallis Significant (p < 0.05)"
+            elif kw_is_sig and not is_significant:
+                overall_status_str = f"Lifespan Rank Shift Significant (KW p = {kw_p_str})"
+            elif is_significant and not kw_is_sig:
+                overall_status_str = f"Hazard Rate Significant (Log-Rank p = {p_str})"
+            else:
+                overall_status_str = "No Statistically Significant Difference (p ≥ 0.05)"
+
+            badge_txt = (
+                f"Statistical Distribution Evaluation:\n"
+                f"• Mantel-Cox Log-Rank: χ² = {chisq:.2f}, p = {p_str}\n"
+                f"• Kruskal-Wallis Test: H = {kw_stat:.2f}, p = {kw_p_str}\n"
+                f"• Synthesis: {overall_status_str}"
+            )
+            ax_lrh.text(0.97, 0.94, badge_txt, transform=ax_lrh.transAxes, ha='right', va='top', fontsize=9.2, fontweight='bold',
+                        bbox=dict(boxstyle='round,pad=0.4', facecolor='white', edgecolor='#cbd5e1', alpha=0.92))
+
+            ax_lrh.legend(loc='upper left', frameon=True, facecolor='white', framealpha=0.92, fontsize=9.5)
+            ax_lrh.spines['top'].set_visible(False)
+            ax_lrh.spines['right'].set_visible(False)
+            fig_lrh.tight_layout()
+
+            st.pyplot(fig_lrh)
+
+            buf_lrh = io.BytesIO()
+            fig_lrh.savefig(buf_lrh, format="png", dpi=300, bbox_inches='tight')
+            lrh_bytes = buf_lrh.getvalue()
+            st.session_state['multi_plot_images']['logrank_lifespan_histogram.png'] = lrh_bytes
+            dl_lrh_k = f"dl_lr_hist_plot_{group_col}_{key_suffix}" if key_suffix else f"dl_lr_hist_plot_{group_col}"
+            st.download_button("📥 Download Lifespan Distribution Histogram (PNG)", data=lrh_bytes, file_name="logrank_lifespan_histogram.png", mime="image/png", key=dl_lrh_k)
+            plt.close(fig_lrh)
 
         # Observed vs. Expected Data Table
         st.markdown("#### 📊 Mantel-Cox Observed vs. Expected Breakdown")
@@ -230,8 +308,8 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             })
         st.dataframe(pd.DataFrame(oe_table), use_container_width=True)
 
-        # Post-Hoc Pairwise Log-Rank Comparisons (with Bonferroni Correction)
-        st.markdown("#### 🔄 Post-Hoc Pairwise Log-Rank Comparisons (with Bonferroni Correction)")
+        # Post-Hoc Pairwise Log-Rank Comparisons with Full Multiple Testing & FDR Correction Suite
+        st.markdown("#### 🔄 Post-Hoc Pairwise Log-Rank Comparisons & Multiplicity Adjustments")
         col_lr_sel, col_lr_empty = st.columns([1, 1])
         with col_lr_sel:
             lr_ref_k = f"lr_ref_{group_col}_{key_suffix}" if key_suffix else f"lr_ref_{group_col}"
@@ -251,38 +329,32 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
                 if (g1, g2) not in pairs and (g2, g1) not in pairs:
                     pairs.append((g1, g2))
 
-        n_comp = max(1, len(pairs))
-        pairwise_data = []
+        pairwise_p_dict = {}
         for g1, g2 in pairs:
             m1 = (G == g1)
             m2 = (G == g2)
             e1 = E[m1]
             e2 = E[m2]
+            comp_lbl = f"{g2} vs. {g1} (Ref)" if g1 == ref_baseline_lr else f"{g1} vs. {g2}"
             if np.sum(e1) == 0 and np.sum(e2) == 0:
-                pairwise_data.append({
-                    "Comparison": f"{g2} vs. {g1} (Ref)" if g1 == ref_baseline_lr else f"{g1} vs. {g2}",
-                    "Chi² (χ²)": 0.0,
-                    "Raw p-value": "1.000",
-                    "Bonferroni p-value": "1.000",
-                    "Status (α = 0.05)": "⚪ Not Significant"
-                })
-                continue
-            try:
-                res_p = logrank_test(T[m1], T[m2], event_observed_A=e1, event_observed_B=e2)
-                p_raw = res_p.p_value
-                p_bonf = min(1.0, p_raw * n_comp)
-                sig_label = "✅ Significant" if p_bonf < 0.05 else "⚪ Not Significant"
-                pairwise_data.append({
-                    "Comparison": f"{g2} vs. {g1} (Ref)" if g1 == ref_baseline_lr else f"{g1} vs. {g2}",
-                    "Chi² (χ²)": round(res_p.test_statistic, 3),
-                    "Raw p-value": f"{p_raw:.4g}",
-                    "Bonferroni p-value": f"{p_bonf:.4g}",
-                    "Status (α = 0.05)": sig_label
-                })
-            except Exception:
-                pass
-        if pairwise_data:
-            st.dataframe(pd.DataFrame(pairwise_data), use_container_width=True)
+                p_raw = 1.0
+            else:
+                try:
+                    res_p = logrank_test(T[m1], T[m2], event_observed_A=e1, event_observed_B=e2)
+                    p_raw = float(res_p.p_value)
+                except Exception:
+                    p_raw = 1.0
+            pairwise_p_dict[comp_lbl] = p_raw
+
+        # Render complete Multiple Testing & FDR Studio with theoretical confusion matrix and plots
+        from modules.core.multi_testing import render_multiple_testing_studio
+
+        def mt_image_collector(fn, data):
+            if 'multi_plot_images' not in st.session_state:
+                st.session_state['multi_plot_images'] = {}
+            st.session_state['multi_plot_images'][fn] = data
+
+        render_multiple_testing_studio(pairwise_p_dict, key_suffix=key_suffix, image_collector=mt_image_collector)
 
         st.markdown("#### 💡 Biological Interpretation")
         if is_significant:

@@ -105,12 +105,31 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
                 image_collector(fig_area, 'fig_status_breakdown.png', 'Download Status Breakdown', 't3_area')
 
         with c_b1:
-            st.subheader("Daily Status Distribution")
+            st.subheader("Daily Status Distribution (Histogram)")
             fig_bar, ax_bar = plt.subplots(figsize=(7.0, 5.0), dpi=130)
             x_pos = np.arange(num_days)
             bar_w = 0.35
             ax_bar.bar(x_pos - bar_w / 2, alive_counts, bar_w, label='Alive', color=secondary_color)
             ax_bar.bar(x_pos + bar_w / 2, dead_counts, bar_w, label='Dead', color=primary_color)
+
+            # Hypothesis test p-value for mortality uniformity across days
+            import scipy.stats as sp_stats
+            chi_badge = ""
+            try:
+                if sum(dead_counts) > 0 and len(dead_counts) > 1:
+                    chi_res = sp_stats.chisquare(dead_counts)
+                    p_val_chi = chi_res.pvalue
+                    p_chi_str = "< 0.001" if p_val_chi < 0.001 else f"= {p_val_chi:.4f}"
+                    chi_badge = f"Uniformity χ² = {chi_res.statistic:.2f}, p {p_chi_str}"
+                else:
+                    chi_badge = "0 Mortality (p = 1.000)"
+            except Exception:
+                chi_badge = "χ² p-value: N/A"
+
+            if chi_badge:
+                ax_bar.text(0.04, 0.90, f"Hypothesis Test:\n{chi_badge}", transform=ax_bar.transAxes,
+                            fontsize=8.5, fontweight='bold', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='#cbd5e1', alpha=0.92))
+
             ax_bar.set_xlabel('Observation Day', fontsize=12, fontweight='bold', labelpad=7)
             ax_bar.set_ylabel('Bee Count', fontsize=12, fontweight='bold', labelpad=7)
             ax_bar.set_xticks(x_pos)
@@ -118,6 +137,7 @@ def render_single_feeding_view(computed, df, settings=None, image_collector=None
             ax_bar.legend(loc='upper right', frameon=False, fontsize=9.5)
             ax_bar.spines['top'].set_visible(False)
             ax_bar.spines['right'].set_visible(False)
+            ax_bar.set_title(f"Daily Status Distribution ({chi_badge})", fontsize=11, fontweight='bold', pad=10)
             fig_bar.tight_layout()
             st.pyplot(fig_bar)
             if image_collector:
