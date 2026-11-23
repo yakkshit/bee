@@ -102,7 +102,7 @@ def audit_single_dataframe(df, filename="Active Dataset"):
             if any(mk == c_norm for mk in meta_cols_expected) or 'key' in c_norm or 'beetype' in c_norm or 'hive' in c_norm:
                 d1_raw = df[c].iloc[0]
                 d1_val = "" if pd.isna(d1_raw) else str(d1_raw).strip()
-                if d1_val.lower() in ['nan', 'none', 'null']:
+                if d1_val.lower() in ['nan', 'none', 'null', '', '-', '--', '—', 'n/a', 'na']:
                     d1_val = ""
 
                 # Check subsequent days
@@ -110,7 +110,7 @@ def audit_single_dataframe(df, filename="Active Dataset"):
                 for row_idx in range(1, len(df)):
                     r_raw = df[c].iloc[row_idx]
                     r_val = "" if pd.isna(r_raw) else str(r_raw).strip()
-                    if r_val and r_val.lower() not in ['nan', 'none', 'null', '']:
+                    if r_val and r_val.lower() not in ['nan', 'none', 'null', '', '-', '--', '—', 'n/a', 'na']:
                         if not d1_val:
                             diagnostics.append({
                                 'type': 'warning',

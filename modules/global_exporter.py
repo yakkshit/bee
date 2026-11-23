@@ -7,6 +7,7 @@ Provides unified, one-click global download capabilities across the entire appli
 Renderable in both the header quick-actions bar, the sidebar, and Tab 2.
 """
 import io
+import os
 import re
 import zipfile
 import numpy as np
@@ -358,12 +359,14 @@ def generate_single_file_plot_dict(df, cohort_label="Batch", settings=None, dpi=
 
             badge_life = ""
             try:
-                if len(durations) >= 3:
+                if len(durations) >= 3 and len(set(durations)) > 1:
                     sw_res = sp_stats.shapiro(durations)
                     sw_w, sw_p = sw_res.statistic, sw_res.pvalue
                     sw_p_str = "< 0.001" if sw_p < 0.001 else f"= {sw_p:.4f}"
                     norm_status = "Non-Normal (Weibull Hazard)" if sw_p < 0.05 else "Normal (Gaussian)"
                     badge_life = f"Shapiro-Wilk Normality:\nW = {sw_w:.3f}, p {sw_p_str}\n({norm_status})"
+                elif len(durations) >= 3:
+                    badge_life = f"Uniform Lifespan\nN = {len(durations)} bees"
                 else:
                     badge_life = f"N = {len(durations)} bees"
             except Exception:
@@ -469,7 +472,8 @@ def get_all_active_batches(uploaded_file_dict=None):
                 c_df = load_and_standardize_uploaded_file(c_df.read(), fname)
 
             key_val = extract_key_from_df(c_df)
-            lbl = key_val if key_val else (c_name if c_name else fname)
+            s_base = re.sub(r"\.(csv|tsv|txt|xlsx)$", "", os.path.basename(str(fname)), flags=re.IGNORECASE)
+            lbl = key_val if key_val else s_base
             batches[fname] = (lbl, c_df)
     else:
         # Fallback to active observation sheet in Tab 1

@@ -71,19 +71,19 @@ COHORT_MARKERS = {
 
 def extract_key_from_df(df) -> str:
     """
-    Extracts non-empty key value from DataFrame if a 'key' column exists.
+    Extracts non-empty key value from DataFrame strictly if a 'key' column exists and is filled.
     Strictly prioritizes Day 1 (first row) per bioassay standard, falling back
     to first non-empty entry only if Day 1 was blank.
-    Returns empty string if column is absent or all values are empty / blank / NaN.
+    Returns empty string if 'key' column is absent or all values are empty / blank / NaN / placeholder.
     """
     if df is not None and isinstance(df, pd.DataFrame):
         for col in df.columns:
             if str(col).strip().lower() == 'key':
                 if len(df) > 0:
                     d1_val = str(df[col].iloc[0]).strip()
-                    if d1_val and d1_val.lower() not in ['nan', 'none', 'null', '']:
+                    if d1_val and d1_val.lower() not in ['nan', 'none', 'null', '', '-', '--', '—', 'n/a', 'na']:
                         return d1_val
-                vals = [str(x).strip() for x in df[col].dropna() if str(x).strip() and str(x).strip().lower() not in ['nan', 'none', 'null', '']]
+                vals = [str(x).strip() for x in df[col].dropna() if str(x).strip() and str(x).strip().lower() not in ['nan', 'none', 'null', '', '-', '--', '—', 'n/a', 'na']]
                 if vals:
                     return vals[0]
     return ""
@@ -91,13 +91,15 @@ def extract_key_from_df(df) -> str:
 
 def get_dataset_key_or_filename(raw_name: str, df=None) -> str:
     """
-    Returns the key value from the DataFrame if present and non-empty.
-    If there is no key value, falls back to the file name.
+    Returns the key value from the DataFrame if present and non-empty in 'key' column.
+    If there is no key value, falls back to the clean file name stem (e.g. 'FM_261119_03A').
     """
     key_val = extract_key_from_df(df)
     if key_val:
         return key_val
-    return str(raw_name).strip() if raw_name else "Dataset"
+    s = os.path.basename(str(raw_name).strip()) if raw_name else "Dataset"
+    s_clean = re.sub(r"\.(csv|tsv|txt|xlsx)$", "", s, flags=re.IGNORECASE)
+    return s_clean if s_clean else str(raw_name)
 
 
 def resolve_treatment_string(t_val: str) -> str:
@@ -128,18 +130,15 @@ def resolve_treatment_string(t_val: str) -> str:
 
 def clean_display_name(raw_name: str, df=None) -> str:
     """
-    Returns a clean, title-cased display label based on key (if non-empty) or file name.
-    Example: 'FM_261001_01A.csv' -> 'Fm 261001 01A'
+    Returns the key if non-empty in df 'key' column.
+    If 'key' is not filled, returns the clean file stem (e.g. 'FM_261119_03A').
     """
     key_val = extract_key_from_df(df)
     if key_val:
-        s = key_val
-    else:
-        s = os.path.basename(str(raw_name).strip()) if raw_name else "Dataset"
+        return key_val
+    s = os.path.basename(str(raw_name).strip()) if raw_name else "Dataset"
     s_clean = re.sub(r"\.(csv|tsv|txt|xlsx)$", "", s, flags=re.IGNORECASE)
-    s_clean = re.sub(r"^(sample_|batch_|file_|data_)", "", s_clean, flags=re.IGNORECASE)
-    cleaned = re.sub(r"[_\-]+", " ", s_clean).strip()
-    return cleaned.title() if cleaned else str(raw_name)
+    return s_clean if s_clean else str(raw_name)
 
 
 def clean_cohort_name(raw_name: str, df=None, fallback_to_blinded: bool = False) -> str:
@@ -154,8 +153,8 @@ def clean_cohort_name(raw_name: str, df=None, fallback_to_blinded: bool = False)
     # 1. Check DataFrame's 'Treatment' column first if available
     if df is not None and isinstance(df, pd.DataFrame):
         for col in df.columns:
-            if str(col).strip().lower() in ['treatment', 'temp_treatment', 'temptreatment']:
-                t_vals = [str(x).strip() for x in df[col].dropna() if str(x).strip() and str(x).strip().lower() not in ['nan', 'none', 'null', '']]
+            if str(col).strip().lower() == 'treatment':
+                t_vals = [str(x).strip() for x in df[col].dropna() if str(x).strip() and str(x).strip().lower() not in ['nan', 'none', 'null', '', '-', '--', '—', 'n/a', 'na']]
                 for tv in t_vals[:5]:
                     resolved = resolve_treatment_string(tv)
                     if resolved and resolved != COHORT_BLINDED:
@@ -187,7 +186,7 @@ def clean_cohort_name(raw_name: str, df=None, fallback_to_blinded: bool = False)
         try:
             peek_df = pd.read_csv(f_path, nrows=5)
             for c in peek_df.columns:
-                if str(c).strip().lower() in ['treatment', 'temp_treatment', 'temptreatment']:
+                if str(c).strip().lower() == 'treatment':
                     return clean_cohort_name(raw_name, df=peek_df, fallback_to_blinded=fallback_to_blinded)
         except Exception:
             pass

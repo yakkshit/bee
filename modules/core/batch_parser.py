@@ -387,7 +387,7 @@ def parse_batch_df(raw_df, abbott_c=0.0, batch_name=None):
             if len(df_copy) > 0:
                 raw_m = df_copy[c].iloc[0]
                 m_str = "" if pd.isna(raw_m) else str(raw_m).strip()
-                if m_str and m_str.lower() not in ['nan', 'none', 'null']:
+                if m_str and m_str.lower() not in ['nan', 'none', 'null', '', '-', '--', '—', 'n/a', 'na']:
                     batch_metadata[c_clean] = m_str
 
     individual_bees = []
