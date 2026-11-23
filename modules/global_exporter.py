@@ -451,6 +451,7 @@ def get_all_active_batches(uploaded_file_dict=None):
     Returns an ordered dictionary of {filename: (cohort_display_label, dataframe)}
     for all currently active datasets (from session upload, Tab 1, or defaults).
     """
+    import os
     batches = {}
     uploaded_dict = uploaded_file_dict if uploaded_file_dict is not None else st.session_state.get('uploaded_file_dict', {})
     if uploaded_dict:
@@ -472,7 +473,8 @@ def get_all_active_batches(uploaded_file_dict=None):
                 c_df = load_and_standardize_uploaded_file(c_df.read(), fname)
 
             key_val = extract_key_from_df(c_df)
-            s_base = re.sub(r"\.(csv|tsv|txt|xlsx)$", "", os.path.basename(str(fname)), flags=re.IGNORECASE)
+            clean_fn = str(fname).replace('\\', '/').split('/')[-1]
+            s_base = re.sub(r"\.(csv|tsv|txt|xlsx)$", "", clean_fn, flags=re.IGNORECASE)
             lbl = key_val if key_val else s_base
             batches[fname] = (lbl, c_df)
     else:

@@ -244,12 +244,17 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
             ax_lrh.set_title(f'Lifespan Distribution Histogram Across Cohorts (Log-Rank p = {p_str} | Kruskal-Wallis p = {kw_p_str})', fontsize=11.5, fontweight='bold', pad=12)
 
             kw_is_sig = (kw_p < 0.05) if 'kw_p' in locals() else is_significant
-            if is_significant and kw_is_sig:
-                overall_status_str = "Both Log-Rank & Kruskal-Wallis Significant (p < 0.05)"
-            elif kw_is_sig and not is_significant:
-                overall_status_str = f"Lifespan Rank Shift Significant (KW p = {kw_p_str})"
-            elif is_significant and not kw_is_sig:
-                overall_status_str = f"Hazard Rate Significant (Log-Rank p = {p_str})"
+            lr_is_sig = is_significant
+            lr_is_marg = (0.05 <= p_val < 0.08)
+
+            if lr_is_sig and kw_is_sig:
+                overall_status_str = f"Significant Difference Across Cohorts (Log-Rank p={p_str}, KW p={kw_p_str})"
+            elif kw_is_sig and lr_is_marg:
+                overall_status_str = f"Significant Lifespan Shift (KW p={kw_p_str}; Log-Rank trend p={p_str})"
+            elif kw_is_sig and not lr_is_sig:
+                overall_status_str = f"Significant Lifespan Rank Shift (KW p={kw_p_str})"
+            elif lr_is_sig and not kw_is_sig:
+                overall_status_str = f"Significant Mortality Hazard Shift (Log-Rank p={p_str})"
             else:
                 overall_status_str = "No Statistically Significant Difference (p ≥ 0.05)"
 
@@ -257,7 +262,7 @@ def render_log_rank_analysis(survival_df, group_col='cohort', color_map=None, ke
                 f"Statistical Distribution Evaluation:\n"
                 f"• Mantel-Cox Log-Rank: χ² = {chisq:.2f}, p = {p_str}\n"
                 f"• Kruskal-Wallis Test: H = {kw_stat:.2f}, p = {kw_p_str}\n"
-                f"• Synthesis: {overall_status_str}"
+                f"• Overall Difference: {overall_status_str}"
             )
             ax_lrh.text(0.97, 0.94, badge_txt, transform=ax_lrh.transAxes, ha='right', va='top', fontsize=9.2, fontweight='bold',
                         bbox=dict(boxstyle='round,pad=0.4', facecolor='white', edgecolor='#cbd5e1', alpha=0.92))

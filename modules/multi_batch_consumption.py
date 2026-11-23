@@ -571,12 +571,13 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             ax_gb.set_ylabel('Sucrose Consumption (µL / bee)', fontsize=12.5, fontweight='bold', labelpad=8)
             ax_gb.set_xticks(day_indices)
             ax_gb.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
+            plt.setp(ax_gb.xaxis.get_majorticklabels(), rotation=45, ha='right', rotation_mode='anchor')
             ax_gb.set_xlim(-0.6, max_days_count - 0.4)
             ax_gb.set_ylim(0, None)
             ax_gb.spines['top'].set_visible(False)
             ax_gb.spines['right'].set_visible(False)
 
-            fig_grouped_bars.subplots_adjust(left=0.07, right=0.74, top=0.92, bottom=0.14)
+            fig_grouped_bars.subplots_adjust(left=0.07, right=0.74, top=0.92, bottom=0.18)
             handles_gb, labels_gb = ax_gb.get_legend_handles_labels()
             if whisker_label:
                 handles_gb.append(Line2D([0], [0], color='#1e293b', marker='|', linestyle='-', markersize=8, markeredgewidth=1.5, label=whisker_label))
@@ -637,11 +638,12 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             ax_tgb.set_ylabel('Treatment Solution Consumption (µL / bee)', fontsize=12.5, fontweight='bold', labelpad=8)
             ax_tgb.set_xticks(day_indices)
             ax_tgb.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=10, fontweight='bold')
+            plt.setp(ax_tgb.xaxis.get_majorticklabels(), rotation=45, ha='right', rotation_mode='anchor')
             ax_tgb.set_xlim(-0.6, max_days_count - 0.4)
             ax_tgb.set_ylim(0, None)
             ax_tgb.spines['top'].set_visible(False)
             ax_tgb.spines['right'].set_visible(False)
-            fig_tgb.subplots_adjust(left=0.07, right=0.74, top=0.92, bottom=0.14)
+            fig_tgb.subplots_adjust(left=0.07, right=0.74, top=0.92, bottom=0.18)
 
             handles_tgb, labels_tgb = ax_tgb.get_legend_handles_labels()
             if whisker_label:
@@ -698,6 +700,7 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             ax_dgb1.spines['right'].set_visible(False)
             ax_dgb1.set_xticks(day_indices)
             ax_dgb1.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=9.5, fontweight='bold')
+            plt.setp(ax_dgb1.xaxis.get_majorticklabels(), rotation=45, ha='right', rotation_mode='anchor')
 
             ax_dgb2.set_title("Treatment Solution Consumption (TCons)", fontsize=12.5, fontweight='bold', pad=10)
             ax_dgb2.set_xlabel("Observation Day", fontsize=11.5, fontweight='bold')
@@ -706,8 +709,9 @@ def render_multi_consumption_analysis(processed_batches, settings=None, multi_pl
             ax_dgb2.spines['right'].set_visible(False)
             ax_dgb2.set_xticks(day_indices)
             ax_dgb2.set_xticklabels([day_labels_ref[i] if i < len(day_labels_ref) else f"Day {i+1}" for i in range(max_days_count)], rotation=45, ha='right', fontsize=9.5, fontweight='bold')
+            plt.setp(ax_dgb2.xaxis.get_majorticklabels(), rotation=45, ha='right', rotation_mode='anchor')
 
-            fig_dual_gb.subplots_adjust(left=0.06, right=0.76, top=0.90, bottom=0.18, wspace=0.25)
+            fig_dual_gb.subplots_adjust(left=0.06, right=0.76, top=0.90, bottom=0.22, wspace=0.28)
             handles_dual, labels_dual = ax_dgb2.get_legend_handles_labels()
             if whisker_label:
                 handles_dual.append(Line2D([0], [0], color='#1e293b', marker='|', linestyle='-', markersize=8, markeredgewidth=1.5, label=whisker_label))
